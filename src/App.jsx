@@ -117,7 +117,7 @@ function parseVoiceInput(text, fleet) {
   return null;
 }
 const WINDS=[6,8,10,12,14,16,20];
-const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5};
+const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
 const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR"},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
 const LEG_DEF=[
   {n:1,mark:"Boya 1",   type:"beat", label:"Ceñida 1",    col:"#d97706"},
@@ -146,7 +146,7 @@ const Sep=()=>React.createElement("div",{style:{borderTop:`1px solid ${BDR}`,mar
 
 function Btn({v,onClick,c="acc",fw,lg,sm,dis,st={}}){
   const cols={acc:ACC,grn:GRN,red:RED,gld:GLD,cyn:CYN,dim:T3,prp:PRP};
-  return React.createElement("button",{onClick,disabled:dis,style:{padding:lg?"12px 20px":sm?"5px 10px":"9px 15px",background:dis?CARD2:(cols[c]||ACC),color:dis?T2:"#fff",borderRadius:8,fontSize:lg?15:sm?11:13,fontWeight:700,width:fw?"100%":"auto",opacity:dis?.5:1,...st}},v);
+  return React.createElement("button",{onClick,disabled:dis,style:{padding:lg?"12px 20px":sm?"5px 10px":"9px 15px",background:dis?CARD2:(cols[c]||ACC),color:dis?T2:"#fff",borderRadius:8,fontSize:lg?15:sm?11:13,fontWeight:700,width:fw?"100%":"auto",opacity:dis?0.5:1,...st}},v);
 }
 function Card({children,st={},glow}){
   return React.createElement("div",{style:{background:CARD,border:`1px solid ${glow||BDR}`,borderLeft:glow?`3px solid ${glow}`:"",borderRadius:10,padding:"10px 13px",...st}},children);
@@ -154,20 +154,60 @@ function Card({children,st={},glow}){
 
 // Icono visual del barco con sus colores reales
 function BoatIcon({b,size=52}){
-  const hull = b.hullColor||b.color||"#555";
-  const main = b.mainColor||"#fff";
-  const spi  = b.spiColor ||b.color||"#fff";
-  const jib  = b.jibColor ||"#fff";
+  const hull  = b.hullColor||b.color||"#222";
+  const deck  = b.deckColor||"#ffffff18"; // subtle deck highlight
+  const main  = b.mainColor||"#f0f0f0";
+  const jib   = b.jibColor ||"#e8e8e8";
+  const spi   = b.spiColor ||b.color||"#3b82f6";
+  const mast  = "#999999";
+  const bandsMain = b.trimBandsMain||b.trimBands||[];
+  const bandsJib  = b.trimBandsJib||[];
+  // Boat faces right (bow right). Mast at x=32.
+  // Viewbox 52×52
+  // Hull: stern(5,41) → bow(47,39) → bow-waterline(47,44) → stern-waterline(5,45)
+  // Mast: (32,4) → (32,41)
+  // Boom: (32,40) → (8,39)
+  // Main: (32,4)-(32,40)-(8,39)  ← mast + boom triangle
+  // Genoa: (32,13)-(47,40)-(32,40) ← forestay + deck triangle
+  // Main hypotenuse: from (32,4) top to (8,39) boom end
+  //   x(y) = 32 + (8-32)*(y-4)/(39-4) = 32 - 24*(y-4)/35
+  const mainX = y => 32 - 24*(y-4)/35;
+  // Genoa hypotenuse: from (32,13) to (47,40)
+  //   x(y) = 32 + (47-32)*(y-13)/(40-13) = 32 + 15*(y-13)/27
+  const jibbX = y => 32 + 15*(y-13)/27;
+
   return(
     <svg width={size} height={size} viewBox="0 0 52 52" style={{display:"block",flexShrink:0}}>
-      {/* Casco */}
-      <path d="M8,38 L44,38 L40,46 L12,46 Z" fill={hull} stroke="#00000033" strokeWidth="1"/>
+      {/* Keel */}
+      <path d="M30,44 L28,52 L34,44 Z" fill={hull} opacity="0.7"/>
+      {/* Genova */}
+      <path d="M32,13 L47,40 L32,40 Z" fill={jib} stroke="#00000033" strokeWidth="0.5"/>
+      {/* Génova trim bands */}
+      {bandsJib.map((color,i)=>{
+        const t=(i+1)/(bandsJib.length+1);
+        const y=13+t*27;
+        const xR=jibbX(y);
+        return <line key={i} x1={32} y1={y} x2={xR} y2={y} stroke={color} strokeWidth="1.5" strokeLinecap="round"/>;
+      })}
       {/* Vela mayor */}
-      <path d="M26,4 L26,37 L8,37 Z" fill={main} stroke="#33333355" strokeWidth=".7"/>
-      {/* Génova */}
-      <path d="M26,12 L26,37 L38,37 Z" fill={jib} stroke="#33333344" strokeWidth=".7"/>
-      {/* Spinnaker (semicírculo) */}
-      <path d="M14,20 Q26,8 38,20 L26,37 Z" fill={spi} opacity=".75" stroke="#33333333" strokeWidth=".5"/>
+      <path d="M32,4 L32,40 L8,39 Z" fill={main} stroke="#00000022" strokeWidth="0.5"/>
+      {/* Mayor trim bands */}
+      {bandsMain.map((color,i)=>{
+        const t=(i+1)/(bandsMain.length+1);
+        const y=4+t*35;
+        const xL=mainX(y);
+        return <line key={i} x1={xL} y1={y} x2={32} y2={y} stroke={color} strokeWidth="2" strokeLinecap="round"/>;
+      })}
+      {/* Mástil */}
+      <line x1="32" y1="4" x2="32" y2="41" stroke={mast} strokeWidth="1"/>
+      {/* Botavara */}
+      <line x1="32" y1="40" x2="8" y2="39" stroke={mast} strokeWidth="0.7"/>
+      {/* Casco — forma realista */}
+      <path d="M5,42 Q18,44 32,44 Q40,44 47,42 L47,46 Q32,49 8,47 L5,42 Z" fill={hull}/>
+      {/* Cubierta */}
+      <path d="M5,42 Q25,40 47,42" fill="none" stroke={deck} strokeWidth="1.5"/>
+      {/* Palo mayor en cubierta */}
+      <circle cx="32" cy="41" r="1.2" fill={mast}/>
     </svg>
   );
 }
@@ -184,9 +224,11 @@ function ColorField({label,value,onChange}){
   );
 }
 
-// Buscar foto del barco via API
-async function findBoatPhoto(name, sailNo, cls){
+
+// Buscar foto del barco via API — con contexto de la regata
+async function findBoatPhoto(name, sailNo, cls, regattaName=""){
   try{
+    const context = regattaName ? `en "${regattaName}" o regatas similares` : "";
     const res = await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -194,7 +236,7 @@ async function findBoatPhoto(name, sailNo, cls){
         model:"claude-sonnet-4-20250514", max_tokens:400,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:
-          `Search for a photo of the sailing yacht "${name}" ${sailNo} (${cls}) racing. I need a direct URL to an image file (ending in .jpg, .jpeg, .png or .webp). Search sailing photo sites, yacht club sites, regatta results. Return ONLY the direct image URL, nothing else.`
+          `Search for a racing photo of sailing yacht "${name}" sail number ${sailNo} (${cls}) ${context}. Search regatta photo sites like Rolex, Kos, sailing photo galleries, yacht club sites, regatta results pages. Return ONLY the direct image URL (ending .jpg/.jpeg/.png/.webp), nothing else.`
         }]
       })
     });
@@ -203,6 +245,70 @@ async function findBoatPhoto(name, sailNo, cls){
     const m = text.match(/https?:\/\/[^\s"'<>]+\.(jpg|jpeg|png|webp)(\?[^\s"'<>]*)?/i);
     return m ? m[0] : null;
   }catch{return null;}
+}
+
+// Analizar imagen en base64 (foto desde cámara del móvil)
+async function analyzeBoatColorsFromBase64(base64Data, mediaType, boatName){
+  try{
+    const res = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:700,
+        messages:[{
+          role:"user",
+          content:[
+            {type:"image", source:{type:"base64", media_type:mediaType||"image/jpeg", data:base64Data}},
+            {type:"text", text:`This is a photo of the racing yacht "${boatName}". Analyze all visible colors and return ONLY this JSON (no markdown):
+{"hullColor":"#hex","mainColor":"#hex","jibColor":"#hex","spiColor":"#hex","trimBandsMain":["#hex","#hex"],"trimBandsJib":["#hex"],"trimBandsSpi":["#hex","#hex"]}
+- hullColor: main hull color
+- mainColor: mainsail base color
+- jibColor: headsail/genoa color
+- spiColor: spinnaker color (if visible)
+- trimBandsMain: 2-4 colors of horizontal stripes on MAINSAIL
+- trimBandsJib: 1-3 colors of horizontal stripes on JIB/GENOA (if visible)
+- trimBandsSpi: 1-3 colors of horizontal stripes on SPINNAKER (if visible)
+If a sail is not visible, use [] for its bands.`}
+          ]
+        }]
+      })
+    });
+    const data = await res.json();
+    const text = (data.content||[]).map(i=>i.text||"").join("");
+    const m = text.match(/\{[\s\S]*?\}/);
+    return m ? JSON.parse(m[0]) : null;
+  }catch(e){return null;}
+}
+
+// Analizar foto del barco para extraer colores y bandas de trimming automáticamente
+async function analyzeBoatColors(photoUrl, boatName){
+  try{
+    const res = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:600,
+        messages:[{
+          role:"user",
+          content:[
+            {type:"image", source:{type:"url", url:photoUrl}},
+            {type:"text", text:`This is the racing yacht "${boatName}". Analyze colors and return ONLY this JSON (no markdown):
+{"hullColor":"#hex","mainColor":"#hex","jibColor":"#hex","spiColor":"#hex","trimBands":["#hex","#hex"],"trimBandsMain":["#hex","#hex"],"trimBandsJib":["#hex"],"trimBandsSpi":["#hex","#hex"]}
+- hullColor/mainColor/jibColor/spiColor: base colors
+- trimBandsMain: 2-4 hex colors of horizontal stripes on MAINSAIL (trimming bands)
+- trimBandsJib: 1-3 hex colors of horizontal stripes on JIB/GENOA
+- trimBandsSpi: 1-3 hex colors of horizontal stripes on SPINNAKER
+- trimBands: same as trimBandsMain (for compatibility)
+Use [] if a sail type bands are not visible.`}
+          ]
+        }]
+      })
+    });
+    const data = await res.json();
+    const text = (data.content||[]).map(i=>i.text||"").join("");
+    const m = text.match(/\{[\s\S]*?\}/);
+    return m ? JSON.parse(m[0]) : null;
+  }catch(e){return null;}
 }
 
 
@@ -325,36 +431,133 @@ function CourseDiagram({course,passages,fleet,started,onTap,legRank={}}){
   );
 }
 
-// ── FICHA DE BARCO ────────────────────────────────────────────────────────
-function BoatCard({b, isOwn, onUpdate, onDelete}){
-  const [open,   setOpen]   = useState(false);
-  const [loading,setLoading]= useState(false);
-  const [imgErr, setImgErr] = useState(false);
+// Determina si un color es oscuro (para elegir texto blanco o negro)
+const isDark = c => {
+  if (!c || c.length < 7) return true;
+  const r=parseInt(c.slice(1,3),16), g=parseInt(c.slice(3,5),16), b=parseInt(c.slice(5,7),16);
+  return (r*299+g*587+b*114)/1000 < 128;
+};
+
+function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
+  const [open,      setOpen]     = useState(false);
+  const [loading,   setLoading]  = useState(false);
+  const [analyzing, setAnalyzing]= useState(false);
+  const [imgErr,    setImgErr]   = useState(false);
+  const [msg,       setMsg]      = useState("");
+  const fileRef = useRef(null);
 
   const searchPhoto = async()=>{
-    setLoading(true); setImgErr(false);
-    const url = await findBoatPhoto(b.name, b.sailNo, b.cls);
-    if(url) onUpdate("photoUrl", url);
-    else setImgErr(true);
+    setLoading(true); setImgErr(false); setMsg("");
+    const url = await findBoatPhoto(b.name, b.sailNo, b.cls, regattaName);
+    if(url){ onUpdate("photoUrl", url); setMsg("✓ Foto encontrada"); setImgErr(false); }
+    else { setImgErr(true); setMsg("No se encontró foto. Pega una URL o haz una foto."); }
     setLoading(false);
   };
 
+  const handleCameraPhoto = async(e)=>{
+    const file = e.target.files?.[0];
+    if(!file) return;
+    setAnalyzing(true); setMsg("Procesando foto...");
+    const reader = new FileReader();
+    reader.onload = async(ev)=>{
+      const dataUrl = ev.target.result; // data:image/jpeg;base64,...
+      const [meta, base64] = dataUrl.split(",");
+      const mediaType = meta.match(/:(.*?);/)?.[1]||"image/jpeg";
+      onUpdate("photoUrl", dataUrl); // guardar como data URL
+      setImgErr(false);
+      setMsg("Analizando colores con IA...");
+      const colors = await analyzeBoatColorsFromBase64(base64, mediaType, b.name);
+      if(colors){
+        if(colors.hullColor) { onUpdate("hullColor",colors.hullColor); onUpdate("color",colors.hullColor); }
+        if(colors.mainColor) onUpdate("mainColor",colors.mainColor);
+        if(colors.jibColor)  onUpdate("jibColor", colors.jibColor);
+        if(colors.spiColor)  onUpdate("spiColor",  colors.spiColor);
+        if(colors.trimBandsMain?.length) onUpdate("trimBandsMain",colors.trimBandsMain);
+        if(colors.trimBandsJib?.length)  onUpdate("trimBandsJib", colors.trimBandsJib);
+        if(colors.trimBandsSpi?.length)  onUpdate("trimBandsSpi", colors.trimBandsSpi);
+        // Compat
+        if(colors.trimBandsMain?.length) onUpdate("trimBands",colors.trimBandsMain);
+        setMsg(`✓ Colores detectados desde tu foto`);
+      } else {
+        setMsg("Foto guardada. Pulsa '🎨 Auto-detectar colores' para analizar.");
+      }
+      setAnalyzing(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const autoAnalyze = async()=>{
+    if(!b.photoUrl){ setMsg("⚠️ Primero busca o haz una foto del barco."); return; }
+    setAnalyzing(true); setMsg("Analizando foto con IA...");
+    let colors = null;
+    if(b.photoUrl.startsWith("data:")){
+      const [meta,base64]=b.photoUrl.split(",");
+      const mediaType=meta.match(/:(.*?);/)?.[1]||"image/jpeg";
+      colors = await analyzeBoatColorsFromBase64(base64, mediaType, b.name);
+    } else {
+      colors = await analyzeBoatColors(b.photoUrl, b.name);
+    }
+    if(colors){
+      if(colors.hullColor) { onUpdate("hullColor",colors.hullColor); onUpdate("color",colors.hullColor); }
+      if(colors.mainColor) onUpdate("mainColor",colors.mainColor);
+      if(colors.jibColor)  onUpdate("jibColor", colors.jibColor);
+      if(colors.spiColor)  onUpdate("spiColor",  colors.spiColor);
+      if(colors.trimBandsMain?.length) onUpdate("trimBandsMain",colors.trimBandsMain);
+      if(colors.trimBandsJib?.length)  onUpdate("trimBandsJib", colors.trimBandsJib);
+      if(colors.trimBandsSpi?.length)  onUpdate("trimBandsSpi", colors.trimBandsSpi);
+      if(colors.trimBandsMain?.length) onUpdate("trimBands",colors.trimBandsMain);
+      setMsg(`✓ Colores detectados automáticamente`);
+    } else {
+      setMsg("No se pudieron detectar los colores. Configúralos manualmente.");
+    }
+    setAnalyzing(false);
+  };
+
   const textColor = b.hullColor ? (isDark(b.hullColor)?"#fff":"#000") : "#fff";
+  const bandsMain = b.trimBandsMain||b.trimBands||[];
+  const bandsJib  = b.trimBandsJib||[];
+  const bandsSpi  = b.trimBandsSpi||[];
+
+  // Helper para renderizar la sección de bandas de una vela
+  const BandsSection = ({label, bandsKey, bands, col})=>(
+    <div style={{marginBottom:8}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+        <span style={{fontSize:10,color:col,fontWeight:700}}>{label}</span>
+        <div style={{display:"flex",gap:4}}>
+          {bands.length>0&&<button onClick={()=>onUpdate(bandsKey,bands.slice(0,-1))} style={{padding:"2px 7px",background:T3,color:"#fff",borderRadius:5,fontSize:9,border:"none"}}>−</button>}
+          <button onClick={()=>onUpdate(bandsKey,[...bands,bands[bands.length-1]||"#ff0000"])} style={{padding:"2px 7px",background:GRN,color:"#fff",borderRadius:5,fontSize:9,border:"none"}}>+</button>
+        </div>
+      </div>
+      {bands.length===0
+        ?<div style={{fontSize:9,color:T3,padding:"4px 8px",background:CARD2,borderRadius:6}}>Sin bandas — pulsa + para añadir</div>
+        :<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+          {bands.map((color,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:4}}>
+              <input type="color" value={color||"#ffffff"} onChange={e=>{const nb=[...bands];nb[i]=e.target.value;onUpdate(bandsKey,nb);}}
+                style={{width:28,height:22,border:`1px solid ${BDR}`,borderRadius:5,cursor:"pointer",padding:1,background:"none"}}/>
+              <div style={{width:20,height:20,borderRadius:4,background:color,border:`1px solid ${BDR}`}}/>
+            </div>
+          ))}
+        </div>
+      }
+    </div>
+  );
 
   return(
     <div style={{background:CARD,border:`1px solid ${open?b.color:BDR}`,borderRadius:12,marginBottom:8,overflow:"hidden"}}>
-      {/* Cabecera siempre visible */}
-      <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",cursor:"pointer"}}
-        onClick={()=>setOpen(o=>!o)}>
-        {/* Icono visual del barco */}
+      {/* Input oculto para cámara */}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment"
+        style={{display:"none"}} onChange={handleCameraPhoto}/>
+
+      {/* Cabecera */}
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",cursor:"pointer"}} onClick={()=>setOpen(o=>!o)}>
         <div style={{flexShrink:0}}>
           {b.photoUrl&&!imgErr
             ?<img src={b.photoUrl} onError={()=>setImgErr(true)}
                style={{width:52,height:52,objectFit:"cover",borderRadius:8,border:`1px solid ${BDR}`}}/>
-            :<BoatIcon b={b} size={52}/>
+            :<BoatIcon b={{...b,trimBands:bandsMain}} size={52}/>
           }
         </div>
-        {/* Info básica */}
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
             <div style={{width:28,height:28,borderRadius:6,background:b.hullColor||b.color,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -365,13 +568,13 @@ function BoatCard({b, isOwn, onUpdate, onDelete}){
             </div>
           </div>
           <div style={{fontSize:9,color:T2}}>{b.sailNo} · {b.cls}</div>
-          {/* Mini colores de velas */}
-          <div style={{display:"flex",gap:3,marginTop:4}}>
+          <div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
             {[["M",b.mainColor||"#fff"],["E",b.spiColor||b.color],["G",b.jibColor||"#fff"],["C",b.hullColor||b.color]].map(([l,c])=>(
               <div key={l} style={{width:18,height:18,borderRadius:4,background:c,border:`1px solid #ffffff33`,display:"flex",alignItems:"center",justifyContent:"center"}}>
                 <span style={{fontSize:7,color:isDark(c)?"#fff":"#000",fontWeight:700}}>{l}</span>
               </div>
             ))}
+            {bandsMain.slice(0,3).map((c,i)=><div key={i} style={{width:18,height:6,borderRadius:3,background:c,border:`1px solid #ffffff22`,marginTop:6}}/>)}
             {b.gpH&&<span style={{fontSize:9,color:CYN,marginLeft:4,fontFamily:"monospace"}}>{b.gpH}</span>}
           </div>
         </div>
@@ -380,81 +583,92 @@ function BoatCard({b, isOwn, onUpdate, onDelete}){
 
       {/* Detalles expandibles */}
       {open&&(
-        <div style={{padding:"0 12px 12px",borderTop:`1px solid ${BDR}`}}>
+        <div style={{padding:"0 12px 14px",borderTop:`1px solid ${BDR}`}}>
 
-          {/* Foto */}
+          {/* Foto: buscar, hacer foto con cámara, URL manual */}
           <div style={{marginTop:10,marginBottom:10}}>
             <Lbl v="Foto del barco"/>
-            <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
-              <div style={{flex:1}}>
-                <input value={b.photoUrl||""} onChange={e=>onUpdate("photoUrl",e.target.value)}
-                  placeholder="https://... (URL de la foto)"
-                  style={{marginBottom:6,fontSize:11}}/>
-                <button onClick={searchPhoto} disabled={loading} style={{
-                  width:"100%",padding:"7px 0",background:loading?CARD2:ACC,color:"#fff",
-                  borderRadius:7,border:"none",fontSize:11,fontWeight:700,cursor:loading?"default":"pointer"
-                }}>{loading?"🔍 Buscando foto...":"🔍 Buscar foto en internet"}</button>
-                {imgErr&&<div style={{fontSize:9,color:RED,marginTop:4}}>No se encontró foto. Puedes pegar una URL manualmente.</div>}
-              </div>
-              {b.photoUrl&&!imgErr&&(
-                <img src={b.photoUrl} onError={()=>setImgErr(true)}
-                  style={{width:80,height:64,objectFit:"cover",borderRadius:8,border:`1px solid ${BDR}`,flexShrink:0}}/>
-              )}
+            <input value={b.photoUrl?.startsWith("data:")?"":(b.photoUrl||"")}
+              onChange={e=>onUpdate("photoUrl",e.target.value)}
+              placeholder="https://... (URL) o usa los botones abajo"
+              style={{marginBottom:6,fontSize:11}}/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginBottom:6}}>
+              <button onClick={searchPhoto} disabled={loading||analyzing} style={{padding:"7px 4px",background:loading?CARD2:T3,color:"#fff",borderRadius:7,border:"none",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                {loading?"🔍...":"🔍 Buscar"}
+              </button>
+              <button onClick={()=>fileRef.current?.click()} disabled={loading||analyzing} style={{padding:"7px 4px",background:analyzing?CARD2:ACC,color:"#fff",borderRadius:7,border:"none",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                📷 Cámara
+              </button>
+              <button onClick={autoAnalyze} disabled={loading||analyzing||!b.photoUrl} style={{padding:"7px 4px",background:analyzing?CARD2:PRP,color:"#fff",borderRadius:7,border:"none",fontSize:10,fontWeight:700,cursor:"pointer",opacity:b.photoUrl?1:0.4}}>
+                {analyzing?"🎨...":"🎨 Analizar"}
+              </button>
             </div>
+            {msg&&<div style={{fontSize:10,color:msg.startsWith("✓")?GRN:msg.startsWith("⚠")?GLD:RED,marginBottom:6,lineHeight:1.4}}>{msg}</div>}
+            {b.photoUrl&&!imgErr&&(
+              <img src={b.photoUrl} onError={()=>setImgErr(true)}
+                style={{width:"100%",maxHeight:130,objectFit:"cover",borderRadius:8,border:`1px solid ${BDR}`}}/>
+            )}
           </div>
 
           <Sep/>
 
           {/* Números */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-            <div>
-              <Lbl v="Nº proa (organización)"/>
+            <div><Lbl v="Nº proa (org.)"/>
               <input type="number" min="1" max="99" value={b.bowNum||""} placeholder="1-99"
                 onChange={e=>onUpdate("bowNum",+e.target.value||null)}
-                style={{textAlign:"center",fontSize:16,fontWeight:900}}/>
+                style={{textAlign:"center",fontSize:18,fontWeight:900}}/>
             </div>
-            <div>
-              <Lbl v="Nº vela / Sail No."/>
+            <div><Lbl v="Nº vela / Sail No."/>
               <input value={b.sailNo||""} placeholder="ESP-52"
-                onChange={e=>onUpdate("sailNo",e.target.value)}
-                style={{fontSize:13}}/>
+                onChange={e=>onUpdate("sailNo",e.target.value)} style={{fontSize:13}}/>
             </div>
-            <div>
-              <Lbl v="GPH (s/nm)"/>
+            <div><Lbl v="GPH (s/nm)"/>
               <input type="number" step=".1" value={b.gpH||""} placeholder="560.0"
                 onChange={e=>onUpdate("gpH",+e.target.value||null)}
                 style={{fontFamily:"monospace",fontSize:13}}/>
             </div>
-            <div>
-              <Lbl v="Clase"/>
+            <div><Lbl v="Clase"/>
               <input value={b.cls||""} placeholder="TP 52"
-                onChange={e=>onUpdate("cls",e.target.value)}
-                style={{fontSize:11}}/>
+                onChange={e=>onUpdate("cls",e.target.value)} style={{fontSize:11}}/>
             </div>
           </div>
 
           <Sep/>
 
-          {/* Colores */}
-          <Lbl v="Colores de velas y casco"/>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+          {/* Colores básicos */}
+          <Lbl v="Colores base"/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,marginBottom:10}}>
             <ColorField label="Mayor" value={b.mainColor} onChange={v=>onUpdate("mainColor",v)}/>
             <ColorField label="Spinnaker" value={b.spiColor} onChange={v=>onUpdate("spiColor",v)}/>
             <ColorField label="Génova" value={b.jibColor} onChange={v=>onUpdate("jibColor",v)}/>
             <ColorField label="Casco" value={b.hullColor} onChange={v=>{onUpdate("hullColor",v);onUpdate("color",v);}}/>
           </div>
 
+          <Sep/>
+
+          {/* Bandas de trimming por vela */}
+          <Lbl v="Bandas de trimming por vela"/>
+          <div style={{fontSize:9,color:T2,marginBottom:10,lineHeight:1.5}}>
+            Líneas horizontales en las velas que el trimer usa para ver la profundidad. Cada vela tiene sus propias bandas.
+          </div>
+          <BandsSection label="🔶 Vela Mayor" bandsKey="trimBandsMain" bands={bandsMain} col={GLD}/>
+          <BandsSection label="🔷 Génova / Foque" bandsKey="trimBandsJib" bands={bandsJib} col={CYN}/>
+          <BandsSection label="🔹 Spinnaker" bandsKey="trimBandsSpi" bands={bandsSpi} col={PRP}/>
+
           {/* Preview */}
-          <div style={{display:"flex",alignItems:"center",gap:12,marginTop:10,padding:"10px 12px",background:CARD2,borderRadius:8}}>
-            <BoatIcon b={b} size={64}/>
+          <Sep/>
+          <div style={{display:"flex",alignItems:"center",gap:14,padding:"12px",background:CARD2,borderRadius:8}}>
+            <BoatIcon b={{...b,trimBands:bandsMain}} size={80}/>
             <div>
-              <div style={{fontSize:11,color:T1,fontWeight:700,marginBottom:2}}>{b.name}</div>
-              <div style={{fontSize:9,color:T2}}>Vista previa de colores</div>
-              <div style={{fontSize:9,color:T2,marginTop:2}}>M={b.mainColor||"—"} E={b.spiColor||"—"}</div>
+              <div style={{fontSize:13,color:T1,fontWeight:700,marginBottom:3}}>{b.name}</div>
+              <div style={{fontSize:9,color:T2}}>Mayor: {bandsMain.length} banda{bandsMain.length!==1?"s":""} · Génova: {bandsJib.length} · Spi: {bandsSpi.length}</div>
+              <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+                {bandsMain.map((c,i)=><div key={`m${i}`} style={{width:20,height:6,borderRadius:3,background:c,border:`1px solid ${BDR}`}}/>)}
+              </div>
             </div>
           </div>
 
-          {/* Eliminar */}
           <button onClick={onDelete} style={{marginTop:10,width:"100%",padding:"6px 0",background:"none",color:RED,borderRadius:7,border:`1px solid ${RED}44`,fontSize:11,fontWeight:700,cursor:"pointer"}}>
             🗑 Eliminar este barco
           </button>
@@ -464,8 +678,10 @@ function BoatCard({b, isOwn, onUpdate, onDelete}){
   );
 }
 
+
 function TabConfig({state,setState,race}){
   const co=race.course;
+  const [cfgTab, setCfgTab] = useState("regata"); // "regata" | "flota"
   const updCo=(k,v)=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,course:{...r.course,[k]:v}}:r)}));
   const updFleet=(id,k,v)=>setState(s=>({...s,fleet:s.fleet.map(b=>b.id===id?{...b,[k]:v}:b)}));
   const Slider=({label,k,min,max,step,unit})=>(
@@ -477,75 +693,164 @@ function TabConfig({state,setState,race}){
       <input type="range" min={min} max={max} step={step} value={co[k]} onChange={e=>updCo(k,+e.target.value)} style={{width:"100%",accentColor:ACC,background:"transparent"}}/>
     </div>
   );
-  return(
-    <div style={{overflowY:"auto",height:"100%",padding:"10px 13px"}}>
-      <Card st={{marginBottom:10}}>
-        <Lbl v="Campeonato"/>
-        <input value={state.champ.name} onChange={e=>setState(s=>({...s,champ:{...s.champ,name:e.target.value}}))} placeholder="Nombre"/>
-      </Card>
-      <Card st={{marginBottom:10}}>
-        <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
-          <Lbl v={`Pruebas (${state.races.length})`}/>
-          <button onClick={()=>{const id="r"+(state.races.length+1);setState(s=>({...s,races:[...s.races,{id,name:`Prueba ${s.races.length+1}`,startTime:null,countdownAt:null,finishedAt:null,passages:[],course:{...race.course},discarded:false}],activeRaceId:id}));}} style={{marginLeft:"auto",padding:"3px 9px",background:GRN,color:"#fff",borderRadius:6,fontSize:11,fontWeight:700}}>+ Añadir</button>
-        </div>
-        {state.races.map(r=>(
-          <div key={r.id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
-            <div onClick={()=>setState(s=>({...s,activeRaceId:r.id}))} style={{flex:1,display:"flex",alignItems:"center",gap:7,padding:"6px 9px",background:state.activeRaceId===r.id?`${ACC}22`:CARD2,border:`1px solid ${state.activeRaceId===r.id?ACC:BDR}`,borderRadius:7,cursor:"pointer"}}>
-              <input value={r.name} onClick={e=>e.stopPropagation()} onChange={e=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,name:e.target.value}:x)}))} style={{background:"transparent",border:"none",color:state.activeRaceId===r.id?ACC:T1,fontSize:12,fontWeight:700,padding:0,flex:1}}/>
-              <span style={{fontSize:9,color:r.discarded?RED:r.startTime?GRN:T2}}>{r.discarded?"DESC":r.startTime?"OK":"—"}</span>
-            </div>
-            <button onClick={()=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,discarded:!x.discarded}:x)}))} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,background:r.discarded?RED:T3,color:"#fff"}}>{r.discarded?"↩ Rest.":"🗑 Desc."}</button>
-          </div>
-        ))}
-        <div style={{fontSize:9,color:T2,marginTop:4}}>💡 "Desc." = descartada del campeonato (no cuenta en puntos)</div>
-      </Card>
-      <Card st={{marginBottom:10}}>
-        <Lbl v="Posición de boyas"/>
-        <Slider label="Distancia Boya 1 (nm)" k="mark1Dist" min={0.3} max={5} step={0.1} unit=" nm"/>
-        <Slider label="Distancia Offset 1a desde Boya 1" k="mark1aDist" min={0.05} max={0.5} step={0.05} unit=" nm"/>
-        <div style={{marginBottom:10}}>
-          <span style={{fontSize:11,color:T2}}>Lado del offset</span>
-          <div style={{display:"flex",gap:6,marginTop:5}}>
-            {["port","starboard"].map(s=><button key={s} onClick={()=>updCo("mark1aSide",s)} style={{flex:1,padding:"6px 4px",borderRadius:7,fontSize:11,fontWeight:700,background:co.mark1aSide===s?PRP:CARD2,color:co.mark1aSide===s?"#fff":T2,border:`1px solid ${co.mark1aSide===s?PRP:BDR}`}}>{s==="port"?"Babor":"Estribor"}</button>)}
-          </div>
-        </div>
-        <Slider label="Distancia puerta desde salida" k="gateDist" min={0} max={1} step={0.05} unit=" nm"/>
-      </Card>
-      <Card st={{marginBottom:10}}>
-        <Lbl v="Viento y cuenta atrás"/>
-        <Slider label="Viento estimado" k="windKnots" min={2} max={35} step={1} unit=" kts"/>
-        <Slider label="Minutos cuenta atrás" k="countdownMin" min={1} max={10} step={1} unit=" min"/>
-      </Card>
-      <Card st={{marginBottom:10}}>
-        <Lbl v="Diagrama del recorrido"/>
-        <CourseDiagram course={co} passages={race.passages} fleet={state.fleet} started={false}/>
-      </Card>
-      <Card st={{marginBottom:10}}>
-        <Lbl v="Tu barco ⭐"/>
-        <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-          {state.fleet.map(b=>(
-            <button key={b.id} onClick={()=>setState(s=>({...s,champ:{...s.champ,ownId:b.id}}))}
-              style={{display:"flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:state.champ.ownId===b.id?b.color:CARD2,color:state.champ.ownId===b.id?"#000":T2,border:`1px solid ${state.champ.ownId===b.id?b.color:BDR}`}}>
-              <Dot c={b.color} z={8}/>{b.name}
-            </button>
-          ))}
-        </div>
-      </Card>
 
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-        <Lbl v={`Fichas de barcos · ${state.fleet.length} barcos`}/>
-        <Btn v="⛵ Preset Worlds 2026" onClick={()=>setState(s=>({...s,fleet:CLASS0}))} sm st={{background:"#0a1a30",border:`1px solid #1e4070`,color:T1,fontSize:10}}/>
+  // Gestión de tramos de regata costera
+  const coastalLegs = co.coastalLegs||[];
+  const addCoastalLeg = ()=>updCo("coastalLegs",[...coastalLegs,{id:`cl${Date.now()}`,name:`Tramo ${coastalLegs.length+1}`,distNm:1.0,type:"reach"}]);
+  const updCoastalLeg = (id,k,v)=>updCo("coastalLegs",coastalLegs.map(l=>l.id===id?{...l,[k]:v}:l));
+  const delCoastalLeg = (id)=>updCo("coastalLegs",coastalLegs.filter(l=>l.id!==id));
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {/* Sub-tab bar */}
+      <div style={{display:"flex",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0}}>
+        {[["regata","⚓ Regata"],["flota","⛵ Barcos"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setCfgTab(k)} style={{flex:1,padding:"9px 4px",background:"none",fontSize:12,fontWeight:700,color:cfgTab===k?ACC:T2,borderBottom:cfgTab===k?`2px solid ${ACC}`:"2px solid transparent",border:"none",cursor:"pointer"}}>
+            {l}
+          </button>
+        ))}
       </div>
-      {state.fleet.map(b=>(
-        <BoatCard key={b.id} b={b} isOwn={b.id===state.champ.ownId}
-          onUpdate={(k,v)=>updFleet(b.id,k,v)}
-          onDelete={()=>setState(s=>({...s,fleet:s.fleet.filter(x=>x.id!==b.id)}))}/>
-      ))}
+
+      <div style={{flex:1,overflowY:"auto",padding:"10px 13px"}}>
+
+        {/* ── PESTAÑA REGATA ─────────────────────────────────────── */}
+        {cfgTab==="regata"&&(<>
+
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Campeonato"/>
+            <input value={state.champ.name} onChange={e=>setState(s=>({...s,champ:{...s.champ,name:e.target.value}}))} placeholder="Nombre del campeonato"/>
+          </Card>
+
+          <Card st={{marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
+              <Lbl v={`Pruebas (${state.races.length})`}/>
+              <button onClick={()=>{const id="r"+(state.races.length+1);setState(s=>({...s,races:[...s.races,{id,name:`Prueba ${s.races.length+1}`,startTime:null,countdownAt:null,finishedAt:null,passages:[],course:{...race.course},discarded:false}],activeRaceId:id}));}} style={{marginLeft:"auto",padding:"3px 9px",background:GRN,color:"#fff",borderRadius:6,fontSize:11,fontWeight:700}}>+ Añadir</button>
+            </div>
+            {state.races.map(r=>(
+              <div key={r.id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
+                <div onClick={()=>setState(s=>({...s,activeRaceId:r.id}))} style={{flex:1,display:"flex",alignItems:"center",gap:7,padding:"6px 9px",background:state.activeRaceId===r.id?`${ACC}22`:CARD2,border:`1px solid ${state.activeRaceId===r.id?ACC:BDR}`,borderRadius:7,cursor:"pointer"}}>
+                  <input value={r.name} onClick={e=>e.stopPropagation()} onChange={e=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,name:e.target.value}:x)}))} style={{background:"transparent",border:"none",color:state.activeRaceId===r.id?ACC:T1,fontSize:12,fontWeight:700,padding:0,flex:1}}/>
+                  <span style={{fontSize:9,color:r.discarded?RED:r.startTime?GRN:T2}}>{r.discarded?"DESC":r.startTime?"OK":"—"}</span>
+                </div>
+                <button onClick={()=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,discarded:!x.discarded}:x)}))} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,background:r.discarded?RED:T3,color:"#fff"}}>{r.discarded?"↩":"🗑 Desc."}</button>
+              </div>
+            ))}
+          </Card>
+
+          {/* Tipo de regata */}
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Tipo de recorrido"/>
+            <div style={{display:"flex",gap:6,marginBottom:10}}>
+              {[["wl","⛵ Barlovento/Sotavento","W/L con boya 1, offset y puerta"],["coastal","🗺️ Regata Costera","Tramos personalizados"]].map(([t,label,desc])=>(
+                <button key={t} onClick={()=>updCo("raceType",t)} style={{flex:1,padding:"10px 6px",borderRadius:9,background:co.raceType===t?`${ACC}22`:CARD2,border:`2px solid ${co.raceType===t?ACC:BDR}`,textAlign:"center",cursor:"pointer"}}>
+                  <div style={{fontSize:14,marginBottom:2}}>{label.split(" ")[0]}</div>
+                  <div style={{fontSize:10,fontWeight:700,color:co.raceType===t?ACC:T1}}>{label.split(" ").slice(1).join(" ")}</div>
+                  <div style={{fontSize:8,color:T2,marginTop:2}}>{desc}</div>
+                </button>
+              ))}
+            </div>
+
+            {/* Configuración W/L */}
+            {(co.raceType||"wl")==="wl"&&(<>
+              <Slider label="Distancia Boya 1 (nm)" k="mark1Dist" min={0.3} max={5} step={0.1} unit=" nm"/>
+              <Slider label="Distancia Offset 1a" k="mark1aDist" min={0.05} max={0.5} step={0.05} unit=" nm"/>
+              <div style={{marginBottom:10}}>
+                <span style={{fontSize:11,color:T2}}>Lado del offset</span>
+                <div style={{display:"flex",gap:6,marginTop:5}}>
+                  {["port","starboard"].map(s=><button key={s} onClick={()=>updCo("mark1aSide",s)} style={{flex:1,padding:"6px 4px",borderRadius:7,fontSize:11,fontWeight:700,background:co.mark1aSide===s?PRP:CARD2,color:co.mark1aSide===s?"#fff":T2,border:`1px solid ${co.mark1aSide===s?PRP:BDR}`}}>{s==="port"?"Babor":"Estribor"}</button>)}
+                </div>
+              </div>
+              <Slider label="Distancia puerta" k="gateDist" min={0} max={1} step={0.05} unit=" nm"/>
+            </>)}
+
+            {/* Configuración Costera */}
+            {co.raceType==="coastal"&&(<>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <span style={{fontSize:11,color:T2}}>Tramos del recorrido</span>
+                <button onClick={addCoastalLeg} style={{padding:"4px 10px",background:GRN,color:"#fff",borderRadius:6,fontSize:11,fontWeight:700}}>+ Tramo</button>
+              </div>
+              {coastalLegs.length===0&&<div style={{fontSize:10,color:T3,textAlign:"center",padding:"10px 0"}}>Sin tramos. Pulsa "+ Tramo" para añadir.</div>}
+              {coastalLegs.map((leg,i)=>(
+                <div key={leg.id} style={{background:CARD2,borderRadius:8,padding:"8px 10px",marginBottom:6,border:`1px solid ${BDR}`}}>
+                  <div style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+                    <div style={{width:20,height:20,borderRadius:5,background:ACC,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <span style={{fontSize:10,fontWeight:900,color:"#fff"}}>{i+1}</span>
+                    </div>
+                    <input value={leg.name} onChange={e=>updCoastalLeg(leg.id,"name",e.target.value)}
+                      placeholder="Nombre del tramo" style={{flex:1,fontSize:11}}/>
+                    <button onClick={()=>delCoastalLeg(leg.id)} style={{background:"none",color:RED,fontSize:14,border:"none",padding:"0 4px"}}>✕</button>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:9,color:T2,marginBottom:3}}>Distancia (nm)</div>
+                      <input type="number" step="0.1" min="0.1" value={leg.distNm} onChange={e=>updCoastalLeg(leg.id,"distNm",+e.target.value)}
+                        style={{fontFamily:"monospace",fontSize:13,textAlign:"center"}}/>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:9,color:T2,marginBottom:3}}>Tipo</div>
+                      <div style={{display:"flex",gap:3}}>
+                        {[["beat","⬆️"],["reach","↗️"],["run","⬇️"]].map(([t,ic])=>(
+                          <button key={t} onClick={()=>updCoastalLeg(leg.id,"type",t)} style={{flex:1,padding:"4px 2px",borderRadius:6,fontSize:10,background:leg.type===t?ACC:CARD,color:leg.type===t?"#fff":T2,border:`1px solid ${leg.type===t?ACC:BDR}`}}>{ic}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {coastalLegs.length>0&&(
+                <div style={{padding:"6px 10px",background:CARD2,borderRadius:7,fontSize:10,color:CYN}}>
+                  Total: {coastalLegs.reduce((a,l)=>a+l.distNm,0).toFixed(2)} nm · {coastalLegs.length} tramos
+                </div>
+              )}
+            </>)}
+          </Card>
+
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Viento y cuenta atrás"/>
+            <Slider label="Viento estimado" k="windKnots" min={2} max={35} step={1} unit=" kts"/>
+            <Slider label="Minutos cuenta atrás" k="countdownMin" min={1} max={10} step={1} unit=" min"/>
+          </Card>
+
+          {(co.raceType||"wl")==="wl"&&(
+            <Card st={{marginBottom:10}}>
+              <Lbl v="Diagrama del recorrido"/>
+              <CourseDiagram course={co} passages={race.passages} fleet={state.fleet} started={false}/>
+            </Card>
+          )}
+        </>)}
+
+        {/* ── PESTAÑA FLOTA/BARCOS ───────────────────────────────── */}
+        {cfgTab==="flota"&&(<>
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Tu barco ⭐"/>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+              {state.fleet.map(b=>(
+                <button key={b.id} onClick={()=>setState(s=>({...s,champ:{...s.champ,ownId:b.id}}))}
+                  style={{display:"flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:state.champ.ownId===b.id?b.color:CARD2,color:state.champ.ownId===b.id?"#000":T2,border:`1px solid ${state.champ.ownId===b.id?b.color:BDR}`}}>
+                  <Dot c={b.color} z={8}/>{b.name}
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <Lbl v={`Fichas · ${state.fleet.length} barcos`}/>
+            <Btn v="⛵ Preset Worlds 2026" onClick={()=>setState(s=>({...s,fleet:CLASS0}))} sm st={{background:"#0a1a30",border:`1px solid #1e4070`,color:T1,fontSize:10}}/>
+          </div>
+          {state.fleet.map(b=>(
+            <BoatCard key={b.id} b={b} isOwn={b.id===state.champ.ownId}
+              regattaName={state.champ.name}
+              onUpdate={(k,v)=>updFleet(b.id,k,v)}
+              onDelete={()=>setState(s=>({...s,fleet:s.fleet.filter(x=>x.id!==b.id)}))}/>
+          ))}
+        </>)}
+
+      </div>
     </div>
   );
 }
 
-function TabEnVivo({state,setState}){
+function TabEnVivo({state,setState,role="patron"}){
   // ── Extraer datos del estado PRIMERO (antes de cualquier hook) ──────────
   // Esto evita el error "Cannot access X before initialization" (TDZ)
   const fleet      = state.fleet;
@@ -634,7 +939,7 @@ function TabEnVivo({state,setState}){
   const displayTime  = finishedAt?(finishedAt-startTime)/1000:startTime?Math.max(0,(now-startTime)/1000):0;
   const updRace      = fn=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?fn(r):r)}));
   const boatLeg      = id=>passages.filter(p=>p.boatId===id).length;
-  const record       = id=>{const nl=boatLeg(id)+1;if(nl>6||!started)return;updRace(r=>({...r,passages:[...r.passages,{boatId:id,leg:nl,realTime:Date.now()}]}));setPend(null);};
+  const record       = id=>{if(isEspectador)return;const nl=boatLeg(id)+1;if(nl>6||!started)return;updRace(r=>({...r,passages:[...r.passages,{boatId:id,leg:nl,realTime:Date.now(),by:role}]}));setPend(null);};
   const undo         = ()=>updRace(r=>({...r,passages:r.passages.slice(0,-1),finishedAt:null}));
   const race         = activeRace; // alias para el resto del JSX
   const ldr          = standings.find(r=>r.ct!=null);
@@ -671,11 +976,24 @@ function TabEnVivo({state,setState}){
   const byLeg={};fleet.forEach(b=>{const l=boatLeg(b.id);const k=l>=6?"fin":String(l);if(!byLeg[k])byLeg[k]=[];byLeg[k].push(b);});
   const legGroups=Object.entries(byLeg).sort((a,b)=>{if(a[0]==="fin")return 1;if(b[0]==="fin")return-1;return+b[0]-+a[0];});
 
-  // Ordenar flota por número de proa para la cuadrícula
-  const fleetByBow=[...fleet].sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
+  // Filtrar flota según rol del dispositivo
+  const isEspectador = role==="espectador";
+  const filteredFleet = useMemo(()=>{
+    if(role==="barlovento") return fleet.filter(b=>{
+      const lc=passages.filter(p=>p.boatId===b.id).length;
+      const legType=lc<6?LEG_DEF[lc]?.type:null;
+      return lc<6&&(legType==="beat"||legType==="reach");
+    });
+    if(role==="sotavento") return fleet.filter(b=>{
+      const lc=passages.filter(p=>p.boatId===b.id).length;
+      const legType=lc<6?LEG_DEF[lc]?.type:null;
+      return lc<6&&legType==="run";
+    });
+    return fleet; // patron y espectador ven todos
+  },[role,fleet,passages]);
 
-  // Determinar color de fondo del botón según luminancia (texto negro o blanco)
-  const isDark=c=>{const r=parseInt(c.slice(1,3),16),g=parseInt(c.slice(3,5),16),b=parseInt(c.slice(5,7),16);return(r*299+g*587+b*114)/1000<128;};
+  // Ordenar flota por número de proa para la cuadrícula
+  const fleetByBow=[...filteredFleet].sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%",position:"relative"}}>
@@ -765,6 +1083,14 @@ function TabEnVivo({state,setState}){
           </div>
         )}
 
+        {/* Info de rol para no-patrón */}
+        {role!=="patron"&&(
+          <div style={{padding:"4px 8px",background:role==="espectador"?`${T3}`:role==="barlovento"?`${GRN}22`:`${CYN}22`,borderRadius:6,marginBottom:4,fontSize:10,color:role==="espectador"?T2:role==="barlovento"?GRN:CYN,fontWeight:700}}>
+            {role==="barlovento"&&`⬆️ Boya 1 Barlovento — mostrando ${filteredFleet.length} barcos que se dirigen a tu boya`}
+            {role==="sotavento" &&`⬇️ Puerta 4s/4p — mostrando ${filteredFleet.length} barcos que se dirigen a tu boya`}
+            {role==="espectador"&&"👁️ Modo espectador — solo lectura"}
+          </div>
+        )}
         {!started&&!countdownAt&&(<div style={{display:"flex",gap:5,marginBottom:4}}>{[[1,"Hace 1m"],[2,"Hace 2m"],[5,"Hace 5m"]].map(([m,l])=><Btn key={m} v={l} onClick={()=>updRace(r=>({...r,startTime:Date.now()-m*60000}))} sm c="dim"/>)}</div>)}
 
         <div style={{display:"flex",gap:4,marginTop:4}}>
@@ -971,7 +1297,7 @@ function TabEnVivo({state,setState}){
                         border:`1px solid ${isOwn?b.color:BDR}`,
                         borderLeft:`3px solid ${b.color}`,
                         borderRadius:8,textAlign:"left",
-                        opacity:done?.5:started?1:.5,cursor:canRec?"pointer":"default"
+                        opacity:done?0.5:started?1:.5,cursor:canRec?"pointer":"default"
                       }}>
                         {/* Posición en el tramo */}
                         {!done&&rank.length>0&&<span style={{fontSize:11,fontWeight:800,color:pos===0?GLD:T2,width:20,flexShrink:0}}>{pos+1}°</span>}
@@ -1040,6 +1366,23 @@ function TabTablas({state,race}){
   const [mode,setMode]=useState("tabla");
   const own=state.fleet.find(b=>b.id===state.champ.ownId);
   const ld=n=>legDist(n,course);
+
+  // Comparativa: calcular diferencias totales y ordenar por mayor ventaja primero
+  const rivals = useMemo(()=>{
+    if(!own?.gpH) return [];
+    const ov=vpp(own.gpH,refW);
+    return state.fleet.filter(b=>b.gpH&&b.id!==own.id).map(b=>{
+      const bv=vpp(b.gpH,refW);
+      const dB1   = ov.beat *ld(1)-bv.beat *ld(1);
+      const dR1   = ov.reach*ld(2)-bv.reach*ld(2);
+      const dRun1 = ov.run  *ld(3)-bv.run  *ld(3);
+      const dBTotal  = dB1  *2;
+      const dRTotal  = dR1  *2;
+      const dRunTotal= dRun1*2;
+      const dT = dBTotal+dRTotal+dRunTotal;
+      return {b, dB1, dR1, dRun1, dBTotal, dRTotal, dRunTotal, dT};
+    }).sort((a,z)=>z.dT-a.dT);
+  },[own, refW, state.fleet, course]);
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{padding:"8px 12px",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0}}>
@@ -1085,29 +1428,38 @@ function TabTablas({state,race}){
         {mode==="comparativa"&&!own?.gpH&&<div style={{color:T2,textAlign:"center",padding:"20px 0"}}>Asigna GPH a tu barco en Config</div>}
         {mode==="comparativa"&&own?.gpH&&(
           <>
-            <div style={{fontSize:10,color:T2,marginBottom:12}}>Diferencia por tramo vs <strong style={{color:own.color}}>{own.name}</strong> a {refW}kts. <span style={{color:GRN}}>Verde=llegas antes</span> · <span style={{color:RED}}>Rojo=llegan antes</span></div>
-            {state.fleet.filter(b=>b.gpH&&b.id!==own.id).map(b=>{
-              const ov=vpp(own.gpH,refW),bv=vpp(b.gpH,refW);
-              const dB=ov.beat*ld(1)-bv.beat*ld(1),dR=ov.reach*ld(2)-bv.reach*ld(2),dRun=ov.run*ld(3)-bv.run*ld(3),dT=(dB+dR+dRun)*2;
-              return(
-                <Card key={b.id} st={{marginBottom:7}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
-                    <Dot c={b.color} z={10}/>
-                    <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{b.name}</div><div style={{fontSize:9,color:T2}}>GPH {b.gpH} · {b.cls}</div></div>
-                    <div style={{textAlign:"right"}}><div style={{fontSize:8,color:T2}}>Dif. total</div><Mono v={ft(dT,true)} z={14} c={dT>0?GRN:dT<0?RED:T2}/></div>
+            <div style={{padding:"8px 10px",background:CARD2,borderRadius:8,marginBottom:12,fontSize:10,color:T2,lineHeight:1.6}}>
+              Diferencia total de carrera vs <strong style={{color:own.color}}>{own.name}</strong> a {refW}kts · {(totalDist(course)).toFixed(2)}nm<br/>
+              <span style={{color:GRN}}>Verde = llegas antes</span> · <span style={{color:RED}}>Rojo = llegan antes</span> · Ordenado: más ventaja primero
+            </div>
+            {rivals.map(({b,dB1,dR1,dRun1,dBTotal,dRTotal,dRunTotal,dT},idx)=>(
+              <Card key={b.id} st={{marginBottom:7}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <div style={{width:28,height:28,borderRadius:7,background:b.hullColor||b.color,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:13,fontWeight:900,color:isDark(b.hullColor||b.color)?"#fff":"#000"}}>{b.bowNum||idx+1}</span>
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5}}>
-                    {[[GLD,"Ceñida",dB],[PRP,"Través",dR],[CYN,"Empopada",dRun]].map(([col,lbl,d])=>(
-                      <div key={lbl} style={{textAlign:"center",background:CARD2,borderRadius:7,padding:"5px 3px"}}>
-                        <div style={{fontSize:7,color:col,marginBottom:2}}>{lbl}</div>
-                        <Mono v={ft(Math.abs(d))} z={10} c={T1}/>
-                        <div style={{fontSize:8,fontFamily:"monospace",color:d>0?GRN:d<0?RED:T2,fontWeight:700}}>{d>0?"antes":"después"}</div>
-                      </div>
-                    ))}
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{b.name}</div>
+                    <div style={{fontSize:9,color:T2}}>GPH {b.gpH} · {b.cls}</div>
                   </div>
-                </Card>
-              );
-            })}
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:8,color:T2}}>Total carrera</div>
+                    <Mono v={ft(Math.abs(dT))} z={15} c={dT>0?GRN:dT<0?RED:T2}/>
+                    <div style={{fontSize:9,color:dT>0?GRN:dT<0?RED:T2,fontWeight:700}}>{dT>0?"te dan":"les das"}</div>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5}}>
+                  {[[GLD,"Ceñidas ×2",dBTotal,dB1],[PRP,"Través ×2",dRTotal,dR1],[CYN,"Empopadas ×2",dRunTotal,dRun1]].map(([col,lbl,dTotal,dPer])=>(
+                    <div key={lbl} style={{textAlign:"center",background:CARD2,borderRadius:7,padding:"5px 3px"}}>
+                      <div style={{fontSize:7,color:col,marginBottom:1}}>{lbl}</div>
+                      <Mono v={ft(Math.abs(dTotal))} z={11} c={T1}/>
+                      <div style={{fontSize:7,color:dTotal>0?GRN:dTotal<0?RED:T2,fontWeight:700,marginTop:1}}>{dTotal>0?"antes":"después"}</div>
+                      <div style={{fontSize:7,color:T3,marginTop:1}}>{ft(Math.abs(dPer))}/tramo</div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            ))}
           </>
         )}
       </div>
@@ -1639,10 +1991,28 @@ export default function App(){
   const [champsList, setChampsList] = useState([]);
   const [currentId,  setCurrentId]  = useState(null);
   const [showWizard, setShowWizard] = useState(false);
+  // Rol del dispositivo actual (guardado localmente, no compartido)
+  const [role,       setRole]       = useState(()=>localStorage.getItem('orc-role')||'patron');
+  const [showRoles,  setShowRoles]  = useState(false);
   const saveRef    = useRef(false);
   const lastSaveTs = useRef(0);
   const champsRef  = useRef([]);
   useEffect(()=>{ champsRef.current=champsList; },[champsList]);
+
+  const ROLES = [
+    {id:"patron",     icon:"👨‍✈️", label:"Patrón",          desc:"Control total",                    col:GLD},
+    {id:"barlovento", icon:"⬆️",  label:"Boya 1 Barlovento",desc:"Registra pasos en barlovento/offset",col:GRN},
+    {id:"sotavento",  icon:"⬇️",  label:"Puerta 4s/4p",     desc:"Registra pasos en sotavento",       col:CYN},
+    {id:"espectador", icon:"👁️",  label:"Espectador",        desc:"Solo ver clasificación",            col:T2},
+  ];
+  const currentRole = ROLES.find(r=>r.id===role)||ROLES[0];
+
+  const changeRole = (r) => {
+    setRole(r);
+    localStorage.setItem('orc-role', r);
+    setShowRoles(false);
+    if(r!=='patron') setTab(2); // Ir a En Vivo al seleccionar rol de tripulante
+  };
 
   // Cargar estado inicial — con migración del formato antiguo y manejo de errores
   useEffect(()=>{
@@ -1807,8 +2177,35 @@ export default function App(){
   return(
     <ErrorBoundary>
       {showWizard&&<NewChampWizard onClose={()=>setShowWizard(false)} onCreate={createChamp}/>}
+
+      {/* Modal selector de rol */}
+      {showRoles&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:9998,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={()=>setShowRoles(false)}>
+          <div style={{background:CARD,border:`1px solid ${BDR}`,borderRadius:"14px 14px 0 0",padding:"16px 14px 28px",width:"100%",maxWidth:480}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:13,fontWeight:800,color:"#fff",marginBottom:4,textAlign:"center"}}>Selecciona tu rol en esta regata</div>
+            <div style={{fontSize:10,color:T2,textAlign:"center",marginBottom:14}}>Cada dispositivo puede tener un rol distinto · Se guarda localmente</div>
+            {ROLES.map(r=>(
+              <button key={r.id} onClick={()=>changeRole(r.id)} style={{
+                display:"flex",alignItems:"center",gap:12,width:"100%",padding:"12px 14px",
+                background:role===r.id?`${r.col}22`:CARD2,
+                border:`1px solid ${role===r.id?r.col:BDR}`,borderLeft:`4px solid ${r.col}`,
+                borderRadius:10,marginBottom:8,textAlign:"left",color:"#fff"
+              }}>
+                <span style={{fontSize:22,flexShrink:0}}>{r.icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:r.col}}>{r.label}</div>
+                  <div style={{fontSize:10,color:T2}}>{r.desc}</div>
+                </div>
+                {role===r.id&&<span style={{color:r.col,fontSize:14}}>✓</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{background:BG,height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto"}}>
         <style>{CSS}</style>
+        {/* Header con rol y selector */}
         <div style={{padding:"5px 12px",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0,display:"flex",alignItems:"center",gap:7}}>
           <div style={{flex:1}}>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -1817,12 +2214,21 @@ export default function App(){
             </div>
             <div style={{fontSize:9,color:T2}}>{activeRace?.name||"Sin prueba"} · {state.fleet?.length||0} barcos</div>
           </div>
-          {sync&&<span style={{fontSize:9,color:GRN}}>● guardando</span>}
+          {sync&&<span style={{fontSize:9,color:GRN}}>● </span>}
+          {/* Botón de rol — siempre visible */}
+          <button onClick={()=>setShowRoles(true)} style={{
+            display:"flex",alignItems:"center",gap:4,padding:"4px 9px",
+            background:`${currentRole.col}22`,border:`1px solid ${currentRole.col}55`,
+            borderRadius:18,cursor:"pointer",flexShrink:0
+          }}>
+            <span style={{fontSize:13}}>{currentRole.icon}</span>
+            <span style={{fontSize:9,color:currentRole.col,fontWeight:700}}>{currentRole.label}</span>
+          </button>
         </div>
         <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
           {tab===0&&<TabHome champsList={champsList} currentChampId={currentId} state={state} onSelect={selectChamp} onDelete={handleDelete} onNew={()=>setShowWizard(true)}/>}
           {tab===1&&<TabConfig state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
-          {tab===2&&<TabEnVivo state={state} setState={wrappedSetState}/>}
+          {tab===2&&<TabEnVivo state={state} setState={wrappedSetState} role={role}/>}
           {tab===3&&<TabTablas state={state} race={activeRace}/>}
           {tab===4&&<TabResultados state={state} setState={wrappedSetState}/>}
         </div>
