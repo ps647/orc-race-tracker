@@ -2537,14 +2537,17 @@ Responde ÚNICAMENTE con un array JSON válido, sin markdown ni explicación:
       const res = await fetch(CLAUDE_API,{
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:2000,
+          model:"claude-sonnet-4-20250514", max_tokens:3000,
           messages:[{role:"user", content:
 `Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
-Para cada barco devuelve: name, sailNo, cls (clase ORC), boatType, gpH (numérico), bowNum, nation.
-Responde ÚNICAMENTE con array JSON válido sin markdown:
-[{"name":"BARCO","sailNo":"ESP-1","cls":"ORC 0","boatType":"TP52","gpH":561,"bowNum":1,"nation":"ESP"}]
+Para cada barco devuelve: name, sailNo, cls (clase ORC como "ORC 0", "ORC 1", etc.), boatType, gpH (número entero), bowNum (número entero), nation (código 3 letras).
 
-TEXTO:
+IMPORTANTE: Responde ÚNICAMENTE con el array JSON, sin texto antes ni después, sin bloques markdown, sin explicaciones. Empieza directamente con [ y termina con ].
+
+Ejemplo de formato correcto:
+[{"name":"URBANIA","sailNo":"ESP52801","cls":"ORC 0","boatType":"TP 52","gpH":561,"bowNum":58,"nation":"ESP"}]
+
+TEXTO A ANALIZAR:
 ${text.slice(0,5000)}`}]
         })
       });
@@ -2555,16 +2558,37 @@ ${text.slice(0,5000)}`}]
   };
 
   const processApiResponse = async data =>{
-    const raw = (data.content||[]).map(c=>c.text||"").join("");
-    const m = raw.match(/\[[\s\S]*\]/);
-    if(!m) throw new Error("No se encontraron barcos en el documento");
-    const boats = JSON.parse(m[0]);
-    if(!boats.length) throw new Error("Lista vacía");
+    if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
+    const raw = (data.content||[]).map(c=>c.text||"").join("").trim();
+    if(!raw) throw new Error("La IA no devolvió respuesta. Verifica que la API key es válida.");
+
+    // Extraer JSON — manejar bloques markdown ```json, ``` y JSON directo
+    let jsonStr = null;
+    const mdMatch = raw.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
+    if(mdMatch) jsonStr = mdMatch[1];
+    else {
+      const arrMatch = raw.match(/\[[\s\S]*\]/);
+      if(arrMatch) jsonStr = arrMatch[0];
+    }
+
+    if(!jsonStr){
+      console.error("API raw response:", raw.slice(0,500));
+      throw new Error("No se encontraron barcos. Respuesta de la IA: "+raw.slice(0,200));
+    }
+
+    let boats;
+    try { boats = JSON.parse(jsonStr); }
+    catch(e){ throw new Error("Error parseando JSON: "+e.message); }
+
+    if(!Array.isArray(boats)||!boats.length) throw new Error("La lista está vacía o el formato no es correcto");
+
     const COLORS=["#e74c3c","#3498db","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22","#e91e63","#00bcd4","#8bc34a","#ff5722","#607d8b","#795548","#ff9800","#673ab7"];
     const fleet = boats.map((b,i)=>({
       ...b, id:`m${i}_${Date.now()}`,
-      gpH: b.gpH||580, color:COLORS[i%COLORS.length],
-      hullColor:COLORS[i%COLORS.length], trimBands:[], own:false
+      gpH: b.gpH||b.gph||580,
+      color:COLORS[i%COLORS.length],
+      hullColor:COLORS[i%COLORS.length],
+      trimBands:[], own:false
     }));
     setMsg(`✅ ${fleet.length} barcos extraídos correctamente`);
     onFleetParsed(fleet);
@@ -2738,10 +2762,10 @@ async function fetchFleetFromUrl(url) {
                 model:"claude-sonnet-4-20250514", max_tokens:2000,
                 messages:[{role:"user",content:[
                   {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-                  {type:"text",text:`Extrae TODOS los barcos de este PDF de lista de inscritos ORC.
-Clase: ${cls}. Para cada barco: name, sailNo, bowNum, gpH (número), boatType, nation.
-Responde SOLO array JSON sin markdown:
-[{"name":"BARCO","sailNo":"ESP-1","bowNum":1,"gpH":561,"boatType":"TP52","nation":"ESP","cls":"${cls}"}]`}
+                  {type:"text",text:`Extrae TODOS los barcos de este documento de inscritos ORC.
+Para cada barco: name, sailNo, cls ("ORC 0", "ORC 1", etc.), boatType, gpH (entero), bowNum (entero), nation (3 letras).
+Responde ÚNICAMENTE con el array JSON sin texto adicional, sin bloques markdown, empezando con [ y terminando con ]:
+[{"name":"URBANIA","sailNo":"ESP52801","cls":"ORC 0","boatType":"TP 52","gpH":561,"bowNum":58,"nation":"ESP"}]`}
                 ]}]
               })
             });
