@@ -176,6 +176,38 @@ function compressImage(file, maxW=700, quality=0.72){
 const saveLocalPhoto = (sailNo,type,data)=>lsSet(`orc-p-${type}-${(sailNo||'').replace(/[^A-Z0-9]/gi,'')}`,data);
 const loadLocalPhoto = (sailNo,type)=>lsGet(`orc-p-${type}-${(sailNo||'').replace(/[^A-Z0-9]/gi,'')}`)||null;
 
+// Subir foto al servidor Vercel (Blob) — devuelve URL pública válida en todos los dispositivos
+async function uploadPhotoToServer(base64, sailNo, type){
+  if(IS_ARTIFACT) return null;
+  try{
+    const res = await fetch("/api/upload-photo",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({base64, sailNo, type})
+    });
+    if(!res.ok) return null;
+    const data = await res.json();
+    return data.url||null;
+  }catch{ return null; }
+}
+
+// Cache de URLs de fotos del servidor
+const _srvPhotoCache = {};
+async function loadServerPhotos(){
+  if(IS_ARTIFACT||_srvPhotoCache._loaded) return _srvPhotoCache;
+  try{
+    const res = await fetch("/api/upload-photo");
+    if(!res.ok) return {};
+    const {photos=[]} = await res.json();
+    photos.forEach(p=>{ _srvPhotoCache[p.pathname]=p.url; });
+    _srvPhotoCache._loaded = true;
+  }catch{}
+  return _srvPhotoCache;
+}
+function getServerPhotoUrl(sailNo, type){
+  const key = `orc-boats/${(sailNo||'').replace(/[^A-Z0-9]/gi,'')}-${type}.jpg`;
+  return _srvPhotoCache[key]||null;
+}
+
 function parseVoiceInput(text, fleet) {
   const raw = text.toLowerCase().trim()
     .normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9 ]/g,"");
@@ -1025,18 +1057,34 @@ function BoatPhotoDbTab({fleet, regattaName}){
     setSaving(boatId);
     const b=fleet.find(x=>x.id===boatId);
     const key=b?.sailNo||boatId;
-    // Si la URL es base64, guardar local; si es http, guardar en DB compartida
     const isBase64 = v=>v&&v.startsWith("data:");
-    if(isBase64(beat)){ saveLocalPhoto(key,"beat",beat); setLocalPhotos(p=>({...p,[key]:{...p[key],beat}})); beat="(local)"; }
-    if(isBase64(run)) { saveLocalPhoto(key,"run",run);  setLocalPhotos(p=>({...p,[key]:{...p[key],run}}));  run="(local)";  }
-    const urlBeat = beat&&beat!=="(local)"&&beat.startsWith("http") ? beat : (db[key]?.beat||"");
-    const urlRun  = run &&run !=="(local)"&&run.startsWith("http")  ? run  : (db[key]?.run||"");
+
+    // Subir fotos al servidor Vercel (funciona en todos los dispositivos)
+    let serverBeatUrl = null, serverRunUrl = null;
+    if(isBase64(beat)){
+      setMsg("⬆️ Subiendo foto ceñida al servidor...");
+      serverBeatUrl = await uploadPhotoToServer(beat, key, "beat");
+    }
+    if(isBase64(run)){
+      setMsg("⬆️ Subiendo foto popa al servidor...");
+      serverRunUrl = await uploadPhotoToServer(run, key, "run");
+    }
+
+    // Guardar local como backup
+    if(isBase64(beat)){ saveLocalPhoto(key,"beat",beat); beat = serverBeatUrl||"(local)"; }
+    if(isBase64(run)) { saveLocalPhoto(key,"run",run);  run  = serverRunUrl||"(local)"; }
+
+    const urlBeat = serverBeatUrl||(beat&&beat.startsWith("http")?beat:db[key]?.beat||"");
+    const urlRun  = serverRunUrl||(run&&run.startsWith("http")?run:db[key]?.run||"");
     const entry={name:b?.name||"",sailNo:b?.sailNo||"",beat:urlBeat,run:urlRun,updatedAt:Date.now()};
     const newDb={...db,[key]:entry};
     setDb(newDb);
     await savePhotoDb(newDb);
     setSaving(null); setEditId(null); setBeatUrl(""); setRunUrl("");
-    setMsg("✓ Guardado"); setTimeout(()=>setMsg(""),3000);
+    setMsg(serverBeatUrl||serverRunUrl
+      ?"✅ Foto guardada en servidor — visible en todos los dispositivos"
+      :"✓ Foto guardada localmente"); 
+    setTimeout(()=>setMsg(""),4000);
   };
 
   const handleFile = async(file, type)=>{
@@ -1166,14 +1214,87 @@ function BoatPhotoDbTab({fleet, regattaName}){
 }
 
 
-// Resumen visual de fotos de la flota — muestra miniaturas de ceñida y estado
+// ── ACTUALIZAR FLOTA — re-carga inscritos y ratings ──────────────────────────
+function FleetRefresh({fleet, champ, onUpdate}){
+  const [open,    setOpen]    = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [msg,     setMsg]     = useState("");
+
+  const refresh = async(boats)=>{
+    if(!boats?.length) return;
+    onUpdate(boats);
+    setMsg(`✅ ${boats.length} barcos actualizados`);
+    setOpen(false);
+    setTimeout(()=>setMsg(""),3000);
+  };
+
+  const autoRefresh = async()=>{
+    const url = champ?.entryListUrl;
+    if(!url){ setMsg("Sin URL de inscritos configurada"); return; }
+    setLoading(true); setMsg("🔄 Cargando lista actualizada...");
+    try{
+      const result = await fetchFleetFromUrl(url);
+      if(result?.boats?.length){ refresh(result.boats); }
+      else setMsg("No se pudieron cargar barcos. Usa el método manual.");
+    }catch(e){ setMsg("Error: "+e.message); }
+    setLoading(false);
+  };
+
+  return(
+    <Card st={{marginBottom:10,border:`1px solid ${GLD}33`}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:open?10:0}}>
+        <span style={{fontSize:16}}>🔄</span>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12,fontWeight:700,color:T1}}>Actualizar inscritos y ratings</div>
+          <div style={{fontSize:9,color:T2}}>Añade barcos nuevos y actualiza GPH sin perder configuración</div>
+        </div>
+        <button onClick={()=>setOpen(o=>!o)}
+          style={{padding:"5px 10px",borderRadius:6,background:open?T3:GLD,color:open?"#fff":"#000",fontSize:10,fontWeight:700,border:"none",cursor:"pointer"}}>
+          {open?"✕":"Actualizar"}
+        </button>
+      </div>
+
+      {msg&&<div style={{fontSize:10,color:msg.startsWith("✅")?GRN:msg.startsWith("Error")?RED:CYN,marginBottom:6}}>{msg}</div>}
+
+      {open&&(
+        <div>
+          {champ?.entryListUrl&&(
+            <button onClick={autoRefresh} disabled={loading}
+              style={{width:"100%",padding:"9px 0",borderRadius:8,background:loading?CARD2:ACC,
+                color:"#fff",fontSize:12,fontWeight:700,border:"none",cursor:"pointer",marginBottom:8}}>
+              {loading?"⏳ Cargando...":"🔗 Cargar desde URL original"}
+            </button>
+          )}
+          <div style={{fontSize:10,fontWeight:700,color:GLD,marginBottom:6}}>O sube lista actualizada:</div>
+          <ManualFleetPaste onFleetParsed={refresh}/>
+          <div style={{fontSize:9,color:T2,marginTop:8,lineHeight:1.5}}>
+            ✅ Se conservan: colores, fotos, barco propio<br/>
+            🔄 Se actualizan: GPH/rating, tipo de barco, número de proa<br/>
+            ➕ Se añaden: barcos nuevos en la lista
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── RESUMEN VISUAL DE FOTOS ───────────────────────────────────────────────────
 function FleetPhotoSummary({fleet}){
   const [db, setDb] = useState({});
-  useEffect(()=>{ loadPhotoDb().then(d=>setDb(d||{})); },[]);
+  const [srvLoaded, setSrvLoaded] = useState(false);
+
+  useEffect(()=>{
+    loadPhotoDb().then(d=>setDb(d||{}));
+    loadServerPhotos().then(()=>setSrvLoaded(true));
+  },[]);
 
   const getPhoto = (b, type) => {
     const k = b.sailNo||b.id;
-    return loadLocalPhoto(k, type) || db[k]?.[type==="beat"?"beat":"run"] || b[type==="beat"?"photoUrlBeat":"photoUrlRun"] || null;
+    return getServerPhotoUrl(k,type)
+      || loadLocalPhoto(k, type)
+      || db[k]?.[type==="beat"?"beat":"run"]
+      || b[type==="beat"?"photoUrlBeat":"photoUrlRun"]
+      || null;
   };
 
   const withPhoto   = fleet.filter(b=>getPhoto(b,"beat")||getPhoto(b,"run")).length;
@@ -1303,6 +1424,23 @@ function TabConfig({state,setState,race}){
               })}
             </div>
           </Card>
+
+          {/* ── Actualizar flota ── */}
+          <FleetRefresh fleet={state.fleet} champ={state.champ}
+            onUpdate={updatedBoats=>{
+              // Merge: mantener colores/fotos existentes, actualizar ratings y añadir nuevos barcos
+              setState(s=>{
+                const merged = updatedBoats.map(b=>{
+                  const existing = s.fleet.find(x=>x.sailNo===b.sailNo||x.name===b.name);
+                  return existing
+                    ? {...existing, gpH:b.gpH||existing.gpH, boatType:b.boatType||existing.boatType, bowNum:b.bowNum||existing.bowNum}
+                    : {...b, color:BOAT_COLORS[s.fleet.length%BOAT_COLORS.length], hullColor:BOAT_COLORS[s.fleet.length%BOAT_COLORS.length], trimBands:[]};
+                });
+                // Mantener barcos existentes que no aparecen en la nueva lista (por si acaso)
+                const notInNew = s.fleet.filter(b=>!merged.find(m=>m.sailNo===b.sailNo));
+                return {...s, fleet:[...merged, ...notInNew.map(b=>({...b,_removed:true}))]};
+              });
+            }}/>
 
           {/* Resumen visual de fotos — qué barcos tienen foto y cuáles no */}
           <FleetPhotoSummary fleet={state.fleet}/>
