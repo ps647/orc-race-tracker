@@ -223,6 +223,13 @@ const LEG_DEF=[
 ];
 
 const BG="#070d18",CARD="#0d1826",CARD2="#111f2e",BDR="#1a3050";
+
+// Detectar entorno: artifact de Claude (iframe) vs Vercel (standalone)
+const IS_ARTIFACT = typeof window!=="undefined" && window.self!==window.top;
+const CLAUDE_API  = IS_ARTIFACT
+  ? CLAUDE_API
+  : "/api/claude";
+
 const T1="#e8eef4",T2="#5a7a96",T3="#1e3a5f";
 const ACC="#2563eb",GRN="#059669",RED="#dc2626",GLD="#d97706",CYN="#0891b2",PRP="#7c3aed";
 const CSS=`*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}body,#root{background:${BG};color:${T1};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;height:100vh;overflow:hidden}input,select{width:100%;color:${T1};background:${CARD2};border:1px solid ${BDR};border-radius:8px;padding:8px 10px;font-size:13px;outline:none}input:focus,select:focus{border-color:${ACC}}button{cursor:pointer;border:none;outline:none}button:active{transform:scale(.95)}::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:${BDR}}@keyframes pop{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}.pop{animation:pop .18s ease}`;
@@ -324,7 +331,7 @@ async function findBoatPhoto(name, sailNo, cls, regattaName="", type="upwind"){
   try{
     const slug = name.toLowerCase().replace(/[\s_-]+/g,'');
     const typeQ = type==="run" ? "spinnaker popa downwind" : "ceñida upwind beat";
-    const res = await fetch("https://api.anthropic.com/v1/messages",{
+    const res = await fetch(CLAUDE_API,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
@@ -352,7 +359,7 @@ IMPORTANT: Return ONLY a direct image file URL (ending .jpg/.jpeg/.png/.webp). N
 // Analizar imagen en base64 (foto desde cámara del móvil)
 async function analyzeBoatColorsFromBase64(base64Data, mediaType, boatName){
   try{
-    const res = await fetch("https://api.anthropic.com/v1/messages",{
+    const res = await fetch(CLAUDE_API,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
@@ -385,7 +392,7 @@ If a sail is not visible, use [] for its bands.`}
 // Analizar foto del barco para extraer colores y bandas de trimming automáticamente
 async function analyzeBoatColors(photoUrl, boatName){
   try{
-    const res = await fetch("https://api.anthropic.com/v1/messages",{
+    const res = await fetch(CLAUDE_API,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
@@ -2504,7 +2511,7 @@ function ManualFleetPaste({onFleetParsed}){
         ? {type:"document", source:{type:"base64", media_type:mime, data:b64}}
         : {type:"image",    source:{type:"base64", media_type:mime, data:b64}};
 
-      const res = await fetch("https://api.anthropic.com/v1/messages",{
+      const res = await fetch(CLAUDE_API,{
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           model:"claude-sonnet-4-20250514", max_tokens:2000,
@@ -2527,7 +2534,7 @@ Responde ÚNICAMENTE con un array JSON válido, sin markdown ni explicación:
     if(!text.trim()){ setMsg("Pega primero el texto"); return; }
     setBusy(true); setMsg("🤖 Analizando texto con IA...");
     try{
-      const res = await fetch("https://api.anthropic.com/v1/messages",{
+      const res = await fetch(CLAUDE_API,{
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           model:"claude-sonnet-4-20250514", max_tokens:2000,
@@ -2652,7 +2659,7 @@ async function discoverChampUrls(mainUrl){
     };
   }
   try{
-    const res = await fetch("https://api.anthropic.com/v1/messages",{
+    const res = await fetch(CLAUDE_API,{
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         model:"claude-sonnet-4-20250514", max_tokens:800,
@@ -2685,7 +2692,7 @@ async function fetchOrcResults(url){
   }
   // Para otros campeonatos: búsqueda web
   try{
-    const res = await fetch("https://api.anthropic.com/v1/messages",{
+    const res = await fetch(CLAUDE_API,{
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         model:"claude-sonnet-4-20250514", max_tokens:3000,
@@ -2725,7 +2732,7 @@ async function fetchFleetFromUrl(url) {
             if(!r.ok) continue;
             const buf = await r.arrayBuffer();
             const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-            const apiRes = await fetch("https://api.anthropic.com/v1/messages",{
+            const apiRes = await fetch(CLAUDE_API,{
               method:"POST", headers:{"Content-Type":"application/json"},
               body: JSON.stringify({
                 model:"claude-sonnet-4-20250514", max_tokens:2000,
@@ -2771,7 +2778,7 @@ Responde SOLO array JSON sin markdown:
       if(r.ok){
         const buf = await r.arrayBuffer();
         const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-        const apiRes = await fetch("https://api.anthropic.com/v1/messages",{
+        const apiRes = await fetch(CLAUDE_API,{
           method:"POST", headers:{"Content-Type":"application/json"},
           body:JSON.stringify({
             model:"claude-sonnet-4-20250514", max_tokens:2000,
@@ -2792,7 +2799,7 @@ Responde SOLO array JSON: [{"name":"BOAT","sailNo":"ESP-1","cls":"ORC 0","gpH":5
 
   // ── Búsqueda web genérica para otros campeonatos ──────────────────────────
   try{
-    const res = await fetch("https://api.anthropic.com/v1/messages",{
+    const res = await fetch(CLAUDE_API,{
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         model:"claude-sonnet-4-20250514", max_tokens:3000,
@@ -2853,11 +2860,17 @@ function NewChampWizard({onClose, onCreate}){
     setLoading(true);setErr("");
     try{
       const result = await fetchFleetFromUrl(entryUrl.trim());
+      if(!result||!result.boats?.length){
+        setErr("No se pudieron extraer barcos de esa URL. Prueba pegando el texto manualmente o subiendo el PDF.");
+        setLoading(false); return;
+      }
       setAllBoats(result.boats);
-      setFoundClasses(result.classes);
+      const cls = result.classes?.length>0 ? result.classes : [...new Set(result.boats.map(b=>b.cls).filter(Boolean))];
+      setFoundClasses(cls);
       if(!champName.trim()&&result.eventName) setChampName(result.eventName);
-      setStep("3c");
-    }catch(e){setErr(e.message);}
+      setStep(cls.length>1?"3c":4);
+      if(cls.length<=1){ const colored=result.boats.map((b,i)=>({...b,color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]})); setFleet(colored); setOwnId(colored[0]?.id||""); }
+    }catch(e){setErr("Error: "+e.message+". Prueba el método manual (foto/PDF o pegar texto).");}
     setLoading(false);
   };
 
