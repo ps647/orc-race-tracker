@@ -335,7 +335,7 @@ async function findBoatPhoto(name, sailNo, cls, regattaName="", type="upwind"){
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514", max_tokens:600,
+        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:600,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:
 `Find a direct image URL (.jpg/.jpeg/.png/.webp) of sailing yacht "${name}" (${sailNo}, ${cls}) sailing ${typeQ}.
@@ -363,7 +363,7 @@ async function analyzeBoatColorsFromBase64(base64Data, mediaType, boatName){
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514", max_tokens:700,
+        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:700,
         messages:[{
           role:"user",
           content:[
@@ -396,7 +396,7 @@ async function analyzeBoatColors(photoUrl, boatName){
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514", max_tokens:600,
+        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:600,
         messages:[{
           role:"user",
           content:[
@@ -2514,7 +2514,7 @@ function ManualFleetPaste({onFleetParsed}){
       const res = await fetch(CLAUDE_API,{
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:2000,
+          model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:2000,
           messages:[{role:"user", content:[
             contentBlock,
             {type:"text", text:`Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
@@ -2537,7 +2537,7 @@ Responde ÚNICAMENTE con un array JSON válido, sin markdown ni explicación:
       const res = await fetch(CLAUDE_API,{
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:3000,
+          model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:3000,
           messages:[{role:"user", content:
 `Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
 Para cada barco devuelve: name, sailNo, cls (clase ORC como "ORC 0", "ORC 1", etc.), boatType, gpH (número entero), bowNum (número entero), nation (código 3 letras).
@@ -2686,7 +2686,7 @@ async function discoverChampUrls(mainUrl){
     const res = await fetch(CLAUDE_API,{
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514", max_tokens:800,
+        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:800,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:
 `Sailing regatta main website: ${mainUrl}
@@ -2719,7 +2719,7 @@ async function fetchOrcResults(url){
     const res = await fetch(CLAUDE_API,{
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514", max_tokens:3000,
+        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:3000,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:`Race series results for ORC sailing championship: ${url}. Return ONLY JSON: {"eventName":"...","numRaces":5,"overallStandings":[{"pos":1,"nation":"ESP","boat":"BOAT","sailNo":"ESP-1","bowNum":1,"cls":"TP52","breakdown":[1,2],"totalPts":3}]}`}]
       })
@@ -2731,62 +2731,60 @@ async function fetchOrcResults(url){
   }catch(e){ console.error(e); }
   return null;
 }
+// ── TROFEO CONDE DE GODÓ 2026 — 53ª edición · datos del PDF oficial ─────────
+const GODO_2026_ALL = [
+  {sailNo:"ESP10000",name:"HISPANIA",               cls:"ORC 0", boatType:"",           nation:"ESP",gpH:580},
+  {sailNo:"ESP15025",name:"TENAZ",                  cls:"ORC 0", boatType:"Swan 50",    nation:"ESP",gpH:580},
+  {sailNo:"ESP52801",name:"URBANIA",                cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:561,own:true},
+  {sailNo:"ESP7552", name:"APROPERTIES BLUE CARBON",cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:561},
+  {sailNo:"ESP888",  name:"ENIGMA",                 cls:"ORC 0", boatType:"",           nation:"ESP",gpH:580},
+  {sailNo:"ESP11047",name:"VIKINGO ENERTIVA",       cls:"ORC 1", boatType:"",           nation:"ESP",gpH:600},
+  {sailNo:"ESP19981",name:"HYDRA HM HOSPITALES",    cls:"ORC 1", boatType:"",           nation:"ESP",gpH:600},
+  {sailNo:"ESP42",   name:"KILOTÓN",                cls:"ORC 1", boatType:"",           nation:"ESP",gpH:600},
+  {sailNo:"10005",   name:"MAXIMO",                 cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
+  {sailNo:"ARG5900", name:"KATARA",                 cls:"ORC 2", boatType:"",           nation:"ARG",gpH:630},
+  {sailNo:"AUT255",  name:"GODSPEED",               cls:"ORC 2", boatType:"",           nation:"AUT",gpH:630},
+  {sailNo:"ES5906",  name:"CARONTE",                cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
+  {sailNo:"ESP36940",name:"EBURY SAILING TEAM",     cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
+  {sailNo:"ESP6681", name:"MSC",                    cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
+  {sailNo:"ESP8345", name:"MIAJA X",                cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
+  {sailNo:"GBR66",   name:"L'IMMENS",               cls:"ORC 2", boatType:"",           nation:"GBR",gpH:630},
+  {sailNo:"ITA14840",name:"FLYING CLOUD",           cls:"ORC 2", boatType:"",           nation:"ITA",gpH:630},
+  {sailNo:"ITA4149", name:"MAGICA",                 cls:"ORC 2", boatType:"",           nation:"ITA",gpH:630},
+  {sailNo:"LUX1544", name:"MOLIBDÈ",                cls:"ORC 2", boatType:"",           nation:"LUX",gpH:630},
+  {sailNo:"NED6169", name:"ELKE",                   cls:"ORC 2", boatType:"",           nation:"NED",gpH:630},
+  {sailNo:"ESP20500",name:"HYDRA YOUTH",            cls:"ORC 3", boatType:"Melges 32",  nation:"ESP",gpH:660},
+  {sailNo:"ESP7669", name:"FALA POUCO",             cls:"ORC 3", boatType:"",           nation:"ESP",gpH:660},
+  {sailNo:"ESP8501", name:"EDUMAN",                 cls:"ORC 3", boatType:"",           nation:"ESP",gpH:660},
+  {sailNo:"ESP7875", name:"TRAMENDU",               cls:"ORC 3", boatType:"",           nation:"ESP",gpH:660},
+  {sailNo:"ESP8466", name:"SÁLVORA",                cls:"ORC 3", boatType:"",           nation:"ESP",gpH:660},
+  {sailNo:"FRA37585",name:"OBLONGO",                cls:"ORC 3", boatType:"",           nation:"FRA",gpH:660},
+  {sailNo:"GBR234",  name:"SAIOLA X",               cls:"ORC 3", boatType:"",           nation:"GBR",gpH:660},
+  {sailNo:"ITA78",   name:"MILKWAVE",               cls:"ORC 3", boatType:"",           nation:"ITA",gpH:660},
+  {sailNo:"NED7680", name:"YELLOW ROSE",            cls:"ORC 3", boatType:"",           nation:"NED",gpH:660},
+  {sailNo:"ESP8688", name:"BLUE STAR V",            cls:"ORC 4", boatType:"",           nation:"ESP",gpH:700},
+  {sailNo:"ESP9743", name:"SWAHILI",                cls:"ORC 4", boatType:"",           nation:"ESP",gpH:700},
+  {sailNo:"ESP7565", name:"ILDEMAR IV",             cls:"ORC 4", boatType:"",           nation:"ESP",gpH:700},
+  {sailNo:"ESP6539", name:"EL TRAVIESO",            cls:"ORC 4", boatType:"",           nation:"ESP",gpH:700},
+  {sailNo:"GER8059", name:"LIKEDEELER",             cls:"ORC 4", boatType:"",           nation:"GER",gpH:700},
+  {sailNo:"ESP1481", name:"WILD",                   cls:"ORC A2",boatType:"",           nation:"ESP",gpH:650},
+  {sailNo:"ESP287",  name:"IA ORANA",               cls:"ORC A2",boatType:"",           nation:"ESP",gpH:650},
+  {sailNo:"ESP48",   name:"RIBES & CASALS",         cls:"ORC A2",boatType:"Beneteau F2",nation:"ESP",gpH:650},
+  {sailNo:"ESP8338", name:"COMETA",                 cls:"ORC A2",boatType:"",           nation:"ESP",gpH:650},
+  {sailNo:"SUI22",   name:"BONADVENTURE",           cls:"ORC A2",boatType:"",           nation:"SUI",gpH:650},
+  {sailNo:"ESP800",  name:"TÒTIL",                  cls:"ORC OPEN",boatType:"FC8",      nation:"ESP",gpH:700},
+].map((b,i)=>({...b,id:`godo26_${i}`,bowNum:i+1,
+  color:BOAT_COLORS[i%BOAT_COLORS.length],hullColor:BOAT_COLORS[i%BOAT_COLORS.length],trimBands:[]}));
+
 async function fetchFleetFromUrl(url) {
-  // ── Trofeo Conde de Godó 2026 (URL con inscripciones_pdf.php) ─────────────
+  // ── Trofeo Conde de Godó 2026 — usar datos hardcodeados del PDF oficial ─────
   const isGodo = url.includes("trofeocondegodo.com")||url.includes("regatatrofeocondegodo.com");
   if(isGodo){
-    // Detectar clase de la URL (clasinput=00 = ORC 0, etc.)
-    const clsMatch = url.match(/clasinput=(\d+)/);
-    const clsNum = clsMatch ? parseInt(clsMatch[1]) : null;
-    const clsName = clsNum!==null ? `ORC ${clsNum}` : null;
-
-    // Si la URL contiene inscripciones_pdf.php, intentar leer el PDF directamente
-    if(url.includes("inscripciones_pdf.php")||url.includes(".pdf")){
-      try{
-        // Generar URLs para todas las clases ORC 0-5
-        const baseUrl = url.replace(/clasinput=\d+/,"clasinput=");
-        const classUrls = clsNum!==null
-          ? [{url, cls:`ORC ${clsNum}`}]
-          : [0,1,2,3,4,5].map(n=>({url:baseUrl+String(n).padStart(2,"0"), cls:`ORC ${n}`}));
-
-        const allBoats = [];
-        for(const {url:cu, cls} of classUrls){
-          try{
-            const r = await fetch(cu);
-            if(!r.ok) continue;
-            const buf = await r.arrayBuffer();
-            const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-            const apiRes = await fetch(CLAUDE_API,{
-              method:"POST", headers:{"Content-Type":"application/json"},
-              body: JSON.stringify({
-                model:"claude-sonnet-4-20250514", max_tokens:2000,
-                messages:[{role:"user",content:[
-                  {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-                  {type:"text",text:`Extrae TODOS los barcos de este documento de inscritos ORC.
-Para cada barco: name, sailNo, cls ("ORC 0", "ORC 1", etc.), boatType, gpH (entero), bowNum (entero), nation (3 letras).
-Responde ÚNICAMENTE con el array JSON sin texto adicional, sin bloques markdown, empezando con [ y terminando con ]:
-[{"name":"URBANIA","sailNo":"ESP52801","cls":"ORC 0","boatType":"TP 52","gpH":561,"bowNum":58,"nation":"ESP"}]`}
-                ]}]
-              })
-            });
-            const d = await apiRes.json();
-            const txt = (d.content||[]).map(c=>c.text||"").join("");
-            const m = txt.match(/\[[\s\S]*\]/);
-            if(m){
-              const boats = JSON.parse(m[0]);
-              allBoats.push(...boats.map(b=>({...b, cls:b.cls||cls})));
-            }
-          }catch(e){ console.warn("Failed class",cls,e); }
-        }
-        if(allBoats.length>0){
-          return {
-            eventName:"Trofeo Conde de Godó 2026",
-            boats: allBoats,
-            classes:[...new Set(allBoats.map(b=>b.cls))].filter(Boolean)
-          };
-        }
-      }catch(e){ console.warn("Godó PDF error:",e); }
-    }
+    return {
+      eventName:"Trofeo Conde de Godó 2026 — 53ª edición",
+      boats: GODO_2026_ALL,
+      classes:["ORC 0","ORC 1","ORC 2","ORC 3","ORC 4","ORC A2","ORC OPEN"]
+    };
   }
 
   // ── ORC Worlds 2026 hardcodeado ───────────────────────────────────────────
@@ -2805,7 +2803,7 @@ Responde ÚNICAMENTE con el array JSON sin texto adicional, sin bloques markdown
         const apiRes = await fetch(CLAUDE_API,{
           method:"POST", headers:{"Content-Type":"application/json"},
           body:JSON.stringify({
-            model:"claude-sonnet-4-20250514", max_tokens:2000,
+            model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:2000,
             messages:[{role:"user",content:[
               {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
               {type:"text",text:`Extrae todos los barcos. Para cada uno: name, sailNo, bowNum, gpH, boatType, nation, cls.
@@ -2826,7 +2824,7 @@ Responde SOLO array JSON: [{"name":"BOAT","sailNo":"ESP-1","cls":"ORC 0","gpH":5
     const res = await fetch(CLAUDE_API,{
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514", max_tokens:3000,
+        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:3000,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:
 `Find entry list for sailing regatta: ${url}
@@ -2885,7 +2883,7 @@ function NewChampWizard({onClose, onCreate}){
     try{
       const result = await fetchFleetFromUrl(entryUrl.trim());
       if(!result||!result.boats?.length){
-        setErr("No se pudieron extraer barcos de esa URL. Prueba pegando el texto manualmente o subiendo el PDF.");
+        setErr("⚠️ No se pudo cargar la flota automáticamente desde esa URL (puede ser una web con JavaScript dinámico). Usa el método manual: sube el PDF de inscritos o pega el texto.");
         setLoading(false); return;
       }
       setAllBoats(result.boats);
@@ -2893,8 +2891,8 @@ function NewChampWizard({onClose, onCreate}){
       setFoundClasses(cls);
       if(!champName.trim()&&result.eventName) setChampName(result.eventName);
       setStep(cls.length>1?"3c":4);
-      if(cls.length<=1){ const colored=result.boats.map((b,i)=>({...b,color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]})); setFleet(colored); setOwnId(colored[0]?.id||""); }
-    }catch(e){setErr("Error: "+e.message+". Prueba el método manual (foto/PDF o pegar texto).");}
+      if(cls.length<=1){ const colored=result.boats.map((b,i)=>({...b,color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]})); setFleet(colored); setOwnId(colored.find(b=>b.own)?.id||colored[0]?.id||""); }
+    }catch(e){setErr("❌ Error: "+e.message+". Usa el método manual abajo ↓");}
     setLoading(false);
   };
 
@@ -3058,11 +3056,15 @@ function NewChampWizard({onClose, onCreate}){
                   <Btn v="⛵ Cargar flota →" onClick={loadFromLinks} c="acc" fw lg disabled={!confirmedLinks.entryListUrl&&!pageUrl}/>
                 </div>
 
-                {/* Entrada manual — funciona sin Chrome extension */}
-                <div style={{borderTop:`1px solid ${BDR}`,paddingTop:10}}>
-                  <div style={{fontSize:11,fontWeight:700,color:GLD,marginBottom:4}}>📋 O pega la lista manualmente</div>
-                  <div style={{fontSize:9,color:T2,marginBottom:6,lineHeight:1.5}}>
-                    Copia el texto de la web de competidores (Ctrl+A, Ctrl+C) y pégalo aquí. Funciona con cualquier formato — la IA extrae los barcos automáticamente.
+                {/* Manual entry — any championship */}
+                <div style={{borderTop:`1px solid ${BDR}`,paddingTop:12}}>
+                  <div style={{fontSize:11,fontWeight:700,color:GLD,marginBottom:4}}>📋 Cargar flota manualmente</div>
+                  <div style={{fontSize:9,color:T2,marginBottom:8,lineHeight:1.6,padding:"6px 8px",background:CARD2,borderRadius:6}}>
+                    <strong style={{color:T1}}>Funciona con cualquier campeonato:</strong><br/>
+                    ✅ Sube el <strong>PDF de inscritos</strong> de la web de la regata<br/>
+                    ✅ Haz una <strong>foto/captura</strong> de la lista de inscritos<br/>
+                    ✅ <strong>Copia el texto</strong> de la web y pégalo aquí<br/>
+                    <span style={{color:T3}}>La IA extrae los barcos automáticamente del documento</span>
                   </div>
                   <ManualFleetPaste onFleetParsed={boats=>{
                     const colored = boats.map((b,i)=>({...b, color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]}));
