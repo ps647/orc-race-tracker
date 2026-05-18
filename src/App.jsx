@@ -9,8 +9,9 @@ class ErrorBoundary extends React.Component {
     if (this.state.err) {
       const clearAll = async () => {
         try {
-          await window.storage.delete("orc-v7", true);
-          await window.storage.delete("orc-champs-idx", true);
+          localStorage.removeItem("orc-v7");
+          localStorage.removeItem("orc-champs-idx");
+          Object.keys(localStorage).filter(k=>k.startsWith("orc-ch-")).forEach(k=>localStorage.removeItem(k));
         } catch{}
         this.setState({ err: null });
       };
@@ -54,24 +55,74 @@ function ConfirmDialog({ msg, onOk, onCancel }) {
 }
 
 const SK="orc-v7";
-const saveS=async(s)=>{try{await window.storage.set(SK,JSON.stringify(s),true);}catch(e){}};
-const loadS=async()=>{try{const r=await window.storage.get(SK,true);return r?JSON.parse(r.value):null;}catch(e){return null;}};
+const IDX_KEY="orc-champs-idx";
+const chKey = id=>`orc-ch-${id}`;
+const PHOTO_DB_KEY = "orc-boat-photos-v1"; // Base de datos compartida de fotos
+
+const lsGet = k=>{ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch{ return null; }};
+const lsSet = (k,v)=>{ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{} };
+
+const saveS   = async s => lsSet(SK, s);
+const loadS   = async ()=> lsGet(SK);
+const saveIdx = async arr => lsSet(IDX_KEY, arr);
+const loadIdx = async ()=> lsGet(IDX_KEY)||[];
+const saveCh  = async (id,s) => lsSet(chKey(id), s);
+const loadCh  = async id => lsGet(chKey(id));
+
+// Base de datos compartida — window.storage (shared) para artifact, localStorage como fallback
+const loadPhotoDb = async()=>{
+  try{ const r=await window.storage.get(PHOTO_DB_KEY,true); return r?JSON.parse(r.value):{} ; }
+  catch{ return lsGet(PHOTO_DB_KEY)||{}; }
+};
+const savePhotoDb = async db=>{
+  const s=JSON.stringify(db);
+  try{ await window.storage.set(PHOTO_DB_KEY,s,true); }catch{}
+  lsSet(PHOTO_DB_KEY,db);
+};
 
 const CLASS0=[
-  {id:"SS",name:"SUMMER STORM",    sailNo:"USA-52",  bowNum:1,  cls:"TP 52",          gpH:556, color:"#ef4444", hullColor:"#ef4444", mainColor:"#ffffff", spiColor:"#ef4444", jibColor:"#ffffff"},
-  {id:"VD",name:"VUDU",            sailNo:"MLT-52",  bowNum:2,  cls:"TP 52",          gpH:558, color:"#06b6d4", hullColor:"#06b6d4", mainColor:"#ffffff", spiColor:"#06b6d4", jibColor:"#ffffff"},
-  {id:"XI",name:"XIO",             sailNo:"ITA-52",  bowNum:3,  cls:"TP 52",          gpH:557, color:"#f59e0b", hullColor:"#f59e0b", mainColor:"#ffffff", spiColor:"#f59e0b", jibColor:"#ffffff"},
-  {id:"AB",name:"ARKAS BLUE MOON", sailNo:"TUR-52",  bowNum:4,  cls:"TP 52",          gpH:560, color:"#3b82f6", hullColor:"#1d4ed8", mainColor:"#ffffff", spiColor:"#3b82f6", jibColor:"#ffffff"},
-  {id:"RB",name:"RED BANDIT",      sailNo:"GER-52",  bowNum:5,  cls:"TP 52",          gpH:558, color:"#dc2626", hullColor:"#111111", mainColor:"#ffffff", spiColor:"#dc2626", jibColor:"#ffffff"},
-  {id:"MU",name:"MUSICA",          sailNo:"SUI-52",  bowNum:6,  cls:"TP 52",          gpH:562, color:"#8b5cf6", hullColor:"#8b5cf6", mainColor:"#ffffff", spiColor:"#8b5cf6", jibColor:"#ffffff"},
-  {id:"SL",name:"SPIRIT LORINA",   sailNo:"FRA-52",  bowNum:7,  cls:"TP 52",          gpH:560, color:"#10b981", hullColor:"#10b981", mainColor:"#ffffff", spiColor:"#10b981", jibColor:"#ffffff"},
-  {id:"UR",name:"URBANIA",         sailNo:"ESP-52",  bowNum:8,  cls:"TP 52",          gpH:561, color:"#fbbf24", hullColor:"#fbbf24", mainColor:"#ffffff", spiColor:"#fbbf24", jibColor:"#ffffff", own:true},
-  {id:"DJ",name:"DJANGO WR",       sailNo:"ITA2-51", bowNum:9,  cls:"WALLYROCKET 51", gpH:534, color:"#f97316", hullColor:"#f97316", mainColor:"#ffffff", spiColor:"#f97316", jibColor:"#ffffff"},
-  {id:"RN",name:"ROCKETNIKKA",     sailNo:"ITA3-51", bowNum:10, cls:"WALLYROCKET 51", gpH:537, color:"#e879f9", hullColor:"#e879f9", mainColor:"#ffffff", spiColor:"#e879f9", jibColor:"#ffffff"},
-  {id:"KI",name:"KILARA",          sailNo:"SUI2-51", bowNum:11, cls:"WALLYROCKET 51", gpH:535, color:"#34d399", hullColor:"#34d399", mainColor:"#ffffff", spiColor:"#34d399", jibColor:"#ffffff"},
+  {id:"SS",name:"SUMMER STORM",       sailNo:"USA 520",   bowNum:13,  cls:"Clase 0", boatType:"TP 52",         gpH:556, color:"#ef4444", hullColor:"#222222", mainColor:"#ffffff", spiColor:"#ef4444",  jibColor:"#ffffff"},
+  {id:"RN",name:"ROCKETNIKKA",         sailNo:"ITA-51001", bowNum:11,  cls:"Clase 0", boatType:"Wallyrocket 51",gpH:537, color:"#e879f9", hullColor:"#111111", mainColor:"#ffffff", spiColor:"#e879f9",  jibColor:"#ffffff"},
+  {id:"VD",name:"VUDU",                sailNo:"AUS-52",    bowNum:128, cls:"Clase 0", boatType:"TP 52",         gpH:558, color:"#06b6d4", hullColor:"#06b6d4", mainColor:"#ffffff", spiColor:"#06b6d4",  jibColor:"#ffffff"},
+  {id:"DJ",name:"DJANGO WR",           sailNo:"GBR-51X",   bowNum:115, cls:"Clase 0", boatType:"Wallyrocket 51",gpH:534, color:"#f97316", hullColor:"#f97316", mainColor:"#ffffff", spiColor:"#f97316",  jibColor:"#ffffff"},
+  {id:"FF",name:"FINAL FINAL",         sailNo:"USA 60564", bowNum:6,   cls:"Clase 0", boatType:"PAC 52",        gpH:558, color:"#3b82f6", hullColor:"#1d4ed8", mainColor:"#ffffff", spiColor:"#3b82f6",  jibColor:"#ffffff"},
+  {id:"UR",name:"VITHAS URBANIA",      sailNo:"ESP-52801", bowNum:14,  cls:"Clase 0", boatType:"Soto 52",       gpH:561, color:"#22c55e", hullColor:"#111111", mainColor:"#111111", spiColor:"#22c55e",  jibColor:"#111111", trimBandsMain:["#22c55e","#22c55e","#22c55e"], own:true},
+  {id:"RB",name:"RED BANDIT",          sailNo:"GER 8399",  bowNum:10,  cls:"Clase 0", boatType:"TP 52",         gpH:558, color:"#dc2626", hullColor:"#111111", mainColor:"#ffffff", spiColor:"#dc2626",  jibColor:"#ffffff"},
+  {id:"AL",name:"ALBATOR 3",           sailNo:"FRA-2775",  bowNum:134, cls:"Clase 0", boatType:"Botin 44",      gpH:540, color:"#7c3aed", hullColor:"#7c3aed", mainColor:"#ffffff", spiColor:"#7c3aed",  jibColor:"#ffffff"},
+  {id:"XI",name:"XIO",                 sailNo:"ITA-23520", bowNum:23,  cls:"Clase 0", boatType:"TP52",          gpH:557, color:"#f59e0b", hullColor:"#f59e0b", mainColor:"#ffffff", spiColor:"#f59e0b",  jibColor:"#ffffff"},
+  {id:"SL",name:"SPIRIT OF LORINA II", sailNo:"FRA-2030",  bowNum:122, cls:"Clase 0", boatType:"TP 52",         gpH:560, color:"#10b981", hullColor:"#10b981", mainColor:"#ffffff", spiColor:"#10b981",  jibColor:"#ffffff"},
+  {id:"MU",name:"MUSICA",              sailNo:"SUI 52111", bowNum:5,   cls:"Clase 0", boatType:"TP 52",         gpH:562, color:"#8b5cf6", hullColor:"#8b5cf6", mainColor:"#ffffff", spiColor:"#8b5cf6",  jibColor:"#ffffff"},
+  {id:"AB",name:"ARKAS BLUE MOON",     sailNo:"TUR 3535",  bowNum:3,   cls:"Clase 0", boatType:"TP52",          gpH:560, color:"#3b82f6", hullColor:"#1d4ed8", mainColor:"#ffffff", spiColor:"#3b82f6",  jibColor:"#ffffff"},
+  {id:"KI",name:"KILARA II",           sailNo:"SUI 5103",  bowNum:7,   cls:"Clase 0", boatType:"Wallyrocket 51",gpH:535, color:"#34d399", hullColor:"#34d399", mainColor:"#ffffff", spiColor:"#34d399",  jibColor:"#ffffff"},
+  {id:"NS",name:"NIGHT SHADOW",        sailNo:"ESP-5757",  bowNum:9,   cls:"Clase 0", boatType:"B&C 52",        gpH:545, color:"#64748b", hullColor:"#1e293b", mainColor:"#ffffff", spiColor:"#3b82f6",  jibColor:"#ffffff"},
+  {id:"CH",name:"CHOCOLATE 3",         sailNo:"HUN 53",    bowNum:4,   cls:"Clase 0", boatType:"Farr 52",       gpH:550, color:"#92400e", hullColor:"#92400e", mainColor:"#ffffff", spiColor:"#92400e",  jibColor:"#ffffff"},
 ];
 
-// Números en español para reconocimiento de voz
+const BOAT_COLORS=["#ef4444","#06b6d4","#f59e0b","#3b82f6","#dc2626","#8b5cf6","#10b981","#fbbf24","#f97316","#e879f9","#34d399","#60a5fa","#fb923c","#a78bfa","#4ade80","#facc15","#f472b6","#38bdf8"];
+
+// Clase A — GPH aprox 530-555 (rendimiento alto)
+const CLASS_A=[
+  {id:"RA", name:"RAN",              sailNo:"SWE-30",  bowNum:0, cls:"Clase A", boatType:"Carkeek 40+", gpH:533, color:"#1d4ed8"},
+  {id:"MV", name:"MORGAN V",         sailNo:"ITA-42",  bowNum:0, cls:"Clase A", boatType:"Swan 42",     gpH:543, color:"#06b6d4"},
+  {id:"GM", name:"GARM 42",          sailNo:"SWE-42",  bowNum:0, cls:"Clase A", boatType:"GP42",        gpH:538, color:"#fbbf24"},
+  {id:"DJP",name:"DJANGO JP",        sailNo:"ITA-40",  bowNum:0, cls:"Clase A", boatType:"Fast 40+",    gpH:536, color:"#f97316"},
+];
+// Clase B — GPH aprox 555-575 (rendimiento medio)
+const CLASS_B=[
+  {id:"TN", name:"TECHNONICOL",      sailNo:"MLT-41",  bowNum:0, cls:"Clase B", boatType:"X-41",        gpH:562, color:"#8b5cf6"},
+  {id:"TB2",name:"TO BE",            sailNo:"ITA-41",  bowNum:0, cls:"Clase B", boatType:"IRC",         gpH:558, color:"#10b981"},
+  {id:"ARB",name:"ARABELLA",         sailNo:"LTU-11",  bowNum:0, cls:"Clase B", boatType:"Italia 11.98",gpH:568, color:"#22c55e"},
+  {id:"MS", name:"MASCALZONE LATINO",sailNo:"ITA-40F", bowNum:0, cls:"Clase B", boatType:"Farr 40",     gpH:555, color:"#ef4444"},
+];
+// Clase C — GPH aprox 575-620 (cruceros rápidos)
+const CLASS_C=[
+  {id:"RM", name:"ROBE DA MAT",      sailNo:"ESP-11",  bowNum:0, cls:"Clase C", boatType:"MAT-11",      gpH:580, color:"#92400e"},
+  {id:"FR", name:"FREEDOM 24",       sailNo:"CYP-37",  bowNum:0, cls:"Clase C", boatType:"Vrolijk 37",  gpH:590, color:"#f59e0b"},
+  {id:"LD", name:"LADY DAY 998",     sailNo:"ITA-998", bowNum:0, cls:"Clase C", boatType:"Italia 9.98", gpH:605, color:"#ec4899"},
+  {id:"DH", name:"DIPUTACION DE HUELVA",sailNo:"ESP-37",bowNum:0,cls:"Clase C", boatType:"Salona 37",   gpH:595, color:"#dc2626"},
+  {id:"CH2",name:"CHISUM",           sailNo:"ITA-31",  bowNum:0, cls:"Clase C", boatType:"Cape 31",     gpH:615, color:"#64748b"},
+  {id:"BX", name:"B.LEX",            sailNo:"ITA-30",  bowNum:0, cls:"Clase C", boatType:"Farr 30",     gpH:620, color:"#7c3aed"},
+];
 const NUM_ES={
   "uno":1,"dos":2,"tres":3,"cuatro":4,"cinco":5,"seis":6,
   "siete":7,"ocho":8,"nueve":9,"diez":10,"once":11,
@@ -82,6 +133,49 @@ const NUM_ES={
 };
 
 // Interpretar entrada de voz → barco
+// Resultados ORC World Championship 2026 — Clase 0 · 8 pruebas (14 mayo 2026)
+const ORC_WORLDS_2026_STANDINGS = [
+  {pos:1, nation:"USA", boat:"SUMMER STORM",       sailNo:"USA 520",   bowNum:13, cls:"TP 52",         breakdown:[1,1,1.5,1,1,11,2,2],              totalPts:18.5},
+  {pos:2, nation:"AUS", boat:"VUDU",                sailNo:"AUS-52",    bowNum:128,cls:"TP 52",         breakdown:[2,2,4,10,4,1,3,5],                totalPts:21},
+  {pos:3, nation:"ITA", boat:"ROCKETNIKKA",         sailNo:"ITA-51001", bowNum:11, cls:"Wallyrocket 51",breakdown:[4,5,3,2,2,2,4,4],                 totalPts:21},
+  {pos:4, nation:"ITA", boat:"DJANGO WR",           sailNo:"GBR-51X",   bowNum:115,cls:"Wallyrocket 51",breakdown:[3,4,5,6,5,4,1,1],                totalPts:23},
+  {pos:5, nation:"USA", boat:"FINAL FINAL",         sailNo:"USA 60564", bowNum:6,  cls:"PAC 52",        breakdown:[7,3,10,3,7.5,3,"16 RET",6],       totalPts:39.5},
+  {pos:6, nation:"ITA", boat:"XIO",                 sailNo:"ITA-23520", bowNum:23, cls:"TP52",          breakdown:[5,8,1.5,"16 RET","16 DNC",7,5,3], totalPts:45.5},
+  {pos:7, nation:"ESP", boat:"VITHAS URBANIA",      sailNo:"ESP-52801", bowNum:14, cls:"Soto 52",       breakdown:[11,7,6,4,3,8,8,10],               totalPts:47},
+  {pos:8, nation:"GER", boat:"RED BANDIT",          sailNo:"GER 8399",  bowNum:10, cls:"TP 52",         breakdown:[6,6,11,11,10,5,6,8],              totalPts:52},
+  {pos:9, nation:"FRA", boat:"ALBATOR 3",           sailNo:"FRA-2775",  bowNum:134,cls:"Botin 44",      breakdown:[8,10,13,8,7.5,6,11,11],           totalPts:61.5},
+  {pos:10,nation:"FRA", boat:"SPIRIT OF LORINA II", sailNo:"FRA-2030",  bowNum:122,cls:"TP 52",         breakdown:[12,11,7,7,9,9,9,"16 DNS"],        totalPts:64},
+  {pos:11,nation:"TUR", boat:"ARKAS BLUE MOON",     sailNo:"TUR 3535",  bowNum:3,  cls:"TP52",          breakdown:[9,12,9,9,12,12,7,7],              totalPts:65},
+  {pos:12,nation:"SUI", boat:"MUSICA",              sailNo:"SUI 52111", bowNum:5,  cls:"TP 52",         breakdown:[10,9,12,5,11,10,12,"16 DNS"],     totalPts:69},
+  {pos:13,nation:"AUS", boat:"KILARA II",           sailNo:"SUI 5103",  bowNum:7,  cls:"Wallyrocket 51",breakdown:["16 DNC",13,8,13,6,14,10,9],     totalPts:76},
+  {pos:14,nation:"SUI", boat:"NIGHT SHADOW",        sailNo:"ESP-5757",  bowNum:9,  cls:"B&C 52",        breakdown:[13,14,14,12,13,15,13,13],         totalPts:93},
+  {pos:15,nation:"HUN", boat:"CHOCOLATE 3",         sailNo:"HUN 53",    bowNum:4,  cls:"Farr 52",       breakdown:[14,"16 DSQ",15,14,14,13,14,12],   totalPts:96},
+];
+
+// Comprimir imagen a base64 JPEG (max 700px, calidad 72%)
+function compressImage(file, maxW=700, quality=0.72){
+  return new Promise(resolve=>{
+    const reader = new FileReader();
+    reader.onload = e=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const scale = Math.min(1, maxW/img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.round(img.width*scale);
+        canvas.height = Math.round(img.height*scale);
+        canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+        resolve(canvas.toDataURL('image/jpeg',quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Guardar/cargar foto local por barco (base64 — solo local, no compartida)
+const saveLocalPhoto = (sailNo,type,data)=>lsSet(`orc-p-${type}-${(sailNo||'').replace(/[^A-Z0-9]/gi,'')}`,data);
+const loadLocalPhoto = (sailNo,type)=>lsGet(`orc-p-${type}-${(sailNo||'').replace(/[^A-Z0-9]/gi,'')}`)||null;
+
 function parseVoiceInput(text, fleet) {
   const raw = text.toLowerCase().trim()
     .normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9 ]/g,"");
@@ -118,7 +212,7 @@ function parseVoiceInput(text, fleet) {
 }
 const WINDS=[6,8,10,12,14,16,20];
 const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
-const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR"},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
+const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:""},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
 const LEG_DEF=[
   {n:1,mark:"Boya 1",   type:"beat", label:"Ceñida 1",    col:"#d97706"},
   {n:2,mark:"Offset 1a",type:"reach",label:"Través 1",    col:"#7c3aed"},
@@ -225,18 +319,26 @@ function ColorField({label,value,onChange}){
 }
 
 
-// Buscar foto del barco via API — con contexto de la regata
-async function findBoatPhoto(name, sailNo, cls, regattaName=""){
+// Buscar foto del barco — upwind (ceñida) o downwind (popa/spinnaker)
+async function findBoatPhoto(name, sailNo, cls, regattaName="", type="upwind"){
   try{
-    const context = regattaName ? `en "${regattaName}" o regatas similares` : "";
+    const slug = name.toLowerCase().replace(/[\s_-]+/g,'');
+    const typeQ = type==="run" ? "spinnaker popa downwind" : "ceñida upwind beat";
     const res = await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514", max_tokens:400,
+        model:"claude-sonnet-4-20250514", max_tokens:600,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:
-          `Search for a racing photo of sailing yacht "${name}" sail number ${sailNo} (${cls}) ${context}. Search regatta photo sites like Rolex, Kos, sailing photo galleries, yacht club sites, regatta results pages. Return ONLY the direct image URL (ending .jpg/.jpeg/.png/.webp), nothing else.`
+`Find a direct image URL (.jpg/.jpeg/.png/.webp) of sailing yacht "${name}" (${sailNo}, ${cls}) sailing ${typeQ}.
+
+Search in this order:
+1. Instagram accounts: try "@${slug}" or "@${slug}sailing" or "@${slug}tp52" or "@${slug}sailingteam" — search "instagram ${name} sailing team account photo"
+2. "${name}" sailing photo ${regattaName||"ORC racing"} ${typeQ}
+3. Sailing media sites: sailingscuttlebutt.com, sail-world.com, rolex.com, kosphoto.com, maxroam.com
+
+IMPORTANT: Return ONLY a direct image file URL (ending .jpg/.jpeg/.png/.webp). NOT a webpage URL. NOT an instagram.com post URL. The actual image file. If you find an Instagram post, get the CDN image URL from it (fbcdn.net or cdninstagram.com).`
         }]
       })
     });
@@ -336,82 +438,117 @@ function boatMapPos(lc, idx, total, progress, atStart) {
   return { x: from.x+(to.x-from.x)*p+spread, y: from.y+(to.y-from.y)*p };
 }
 
-function CourseDiagram({course,passages,fleet,started,onTap,legRank={}}){
-  const W=380,H=310;
-  const m1={x:252,y:62},m1a={x:88,y:62},g4s={x:128,y:193},g4p={x:178,y:193};
-  const stPos={x:165,y:278},fin={x:272,y:278},flagX=78,cmX=165;
+function CourseDiagram({course,passages,fleet,started,onTap,legRank={},boatProg={}}){
+  const W=380, H=320;
+  const hasOffset = (course.mark1aDist||0) > 0;
+  const isPort    = (course.mark1aSide||"port") === "port"; // port = izquierda
 
-  const bpos=fleet.map((b,idx)=>{
-    const lc=passages.filter(p=>p.boatId===b.id).length;
-    // Antes de largar: todos en línea de salida
-    const atStart = !started;
-    let progress = 0.5;
-    if (!atStart && lc<6) {
-      const legNum = lc+1;
-      const rank = legRank[legNum];
-      if (rank && rank.length>1) {
-        const pos = rank.indexOf(b.id);
-        if (pos>=0) {
-          // Líder cerca de la boya (0.80), último lejos (0.20)
-          progress = 0.80 - (pos/(rank.length-1))*0.60;
-        }
-      } else if (lc===0) {
-        // Leg 1: sin ranking → cerca de la salida, no a mitad de ceñida
-        progress = 0.15;
-      } else {
-        // Recién pasado una boya → cerca del inicio del nuevo tramo
-        progress = 0.20;
+  // Posiciones fijas de referencia
+  const m1   = {x:220, y:65};          // Boya 1 Barlovento — arriba derecha
+  const g4s  = {x:140, y:210};          // Puerta 4s — abajo izquierda
+  const g4p  = {x:240, y:210};          // Puerta 4p — abajo derecha
+  const stPos= {x:160, y:290};          // Comité salida
+  const fin  = {x:270, y:290};          // Meta
+  const flagX= 75;                       // Boya de salida
+
+  // Posición de la boya 1a según lado y si hay offset
+  const m1a  = hasOffset
+    ? isPort
+      ? {x: 80, y:65}                   // Puerto = izquierda
+      : {x:330, y:65}                   // Estribor = derecha
+    : null;
+
+  // Construir líneas del recorrido según configuración
+  const lines = [];
+  const push = (x1,y1,x2,y2,col,d) => lines.push({x1,y1,x2,y2,col,d});
+
+  if(hasOffset && m1a){
+    // Con offset: Salida→M1→1a→Gate→M1(2)→1a(2)→Meta
+    // 1ª ceñida
+    push(stPos.x,stPos.y, m1.x,m1.y,   GLD,"8,5");
+    // M1 → 1a
+    push(m1.x,m1.y,       m1a.x,m1a.y, PRP,"6,4");
+    // 1a → Puerta
+    push(m1a.x,m1a.y,     g4s.x,g4s.y, CYN,"6,5");
+    // 2ª ceñida: Puerta→M1
+    push(g4p.x,g4p.y,     m1.x-8,m1.y, GLD,"8,5");
+    // M1 → 1a (2ª vez)
+    push(m1.x-8,m1.y,     m1a.x-8,m1a.y,PRP,"6,4");
+    // 1a → Meta
+    push(m1a.x-8,m1a.y,   fin.x,fin.y,  CYN,"6,5");
+  } else {
+    // Sin offset: Salida→M1→Gate→M1(2)→Meta
+    push(stPos.x,stPos.y, m1.x,m1.y,   GLD,"8,5");
+    push(m1.x,m1.y,       g4s.x,g4s.y, CYN,"6,5");
+    push(g4p.x,g4p.y,     m1.x-8,m1.y, GLD,"8,5");
+    push(m1.x-8,m1.y,     fin.x,fin.y,  CYN,"6,5");
+  }
+
+  // Posiciones de barcos (sin cambios)
+  const bpos = fleet.map((b,idx)=>{
+    const lc = passages.filter(p=>p.boatId===b.id).length;
+    let progress = boatProg[b.id] ?? null;
+    if(progress===null){
+      if(started && lc<6){
+        const rank=legRank[lc+1];
+        progress = rank?.length>1
+          ? Math.max(0.1, 0.75-(rank.indexOf(b.id)/(rank.length-1))*0.55)
+          : 0.18;
       }
     }
-    return {b, lc, atStart, ...boatMapPos(lc, idx, fleet.length, progress, atStart)};
+    return {b, lc, ...boatMapPos(lc, idx, fleet.length, progress??0.3, !started)};
   });
-  const lines=[
-    {x1:stPos.x,y1:stPos.y,x2:m1.x,    y2:m1.y,  col:GLD,d:"8,5"},
-    {x1:m1.x,   y1:m1.y,  x2:m1a.x,   y2:m1a.y, col:PRP,d:"6,4"},
-    {x1:m1a.x,  y1:m1a.y, x2:g4s.x,   y2:g4s.y, col:CYN,d:"6,5"},
-    {x1:g4p.x,  y1:g4p.y, x2:m1.x-5,  y2:m1.y,  col:GLD,d:"8,5"},
-    {x1:m1.x-5, y1:m1.y,  x2:m1a.x-5, y2:m1a.y, col:PRP,d:"6,4"},
-    {x1:m1a.x-5,y1:m1a.y, x2:fin.x,   y2:fin.y, col:CYN,d:"6,5"},
-  ];
-  const Mark=({x,y,label,col,side="right"})=>(
+
+  const Mark = ({x,y,label,col,side="right"})=>(
     <g>
       <polygon points={`${x},${y+13} ${x-11},${y-2} ${x+11},${y-2}`} fill={col} opacity={.9}/>
-      <text x={side==="left"?x-25:x+14} y={y+5} fontSize={11} fill={T1} fontWeight="700">{label}</text>
+      <text x={side==="left"?x-16:x+14} y={y+5} fontSize={10} fill={T1} fontWeight="700">{label}</text>
     </g>
   );
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",display:"block",maxHeight:310}}>
+
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",display:"block",maxHeight:320}}>
       {/* Viento */}
       <text x={10} y={20} fontSize={10} fill={T2}>Viento</text>
-      <line x1={22} y1={26} x2={22} y2={60} stroke={T2} strokeWidth={2}/>
-      <polygon points="22,66 17,56 27,56" fill={T2}/>
-      {/* Líneas recorrido */}
-      {lines.map((l,i)=><line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.col} strokeWidth={2.2} strokeDasharray={l.d} opacity={.6}/>)}
+      <line x1={22} y1={26} x2={22} y2={58} stroke={T2} strokeWidth={2}/>
+      <polygon points="22,64 17,54 27,54" fill={T2}/>
+
+      {/* Líneas dinámicas */}
+      {lines.map((l,i)=>(
+        <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+          stroke={l.col} strokeWidth={2.2} strokeDasharray={l.d} opacity={.65}/>
+      ))}
+
       {/* Boyas */}
-      <Mark x={m1.x}  y={m1.y}  label="1 Barlvto" col={GLD}/>
-      <Mark x={m1a.x} y={m1a.y} label="1a Offset"  col={PRP} side="left"/>
-      <Mark x={g4s.x} y={g4s.y} label="4s"          col={CYN} side="left"/>
-      <Mark x={g4p.x} y={g4p.y} label="4p"          col={CYN}/>
-      {/* Salida */}
-      <rect x={cmX-9} y={stPos.y-9} width={18} height={18} rx={3} fill="#556" stroke="#999" strokeWidth={1.5}/>
-      <line x1={flagX} y1={stPos.y} x2={cmX} y2={stPos.y} stroke="#3b82f6" strokeWidth={3}/>
+      <Mark x={m1.x} y={m1.y} label="1 Barlvto" col={GLD}/>
+      {hasOffset&&m1a&&(
+        <Mark x={m1a.x} y={m1a.y} label={`1a (${isPort?"Bab":"Estr"})`}
+          col={PRP} side={isPort?"right":"left"}/>
+      )}
+      <Mark x={g4s.x} y={g4s.y} label="4s" col={CYN} side="left"/>
+      <Mark x={g4p.x} y={g4p.y} label="4p" col={CYN}/>
+
+      {/* Línea de salida */}
+      <line x1={flagX} y1={stPos.y} x2={stPos.x} y2={stPos.y} stroke="#3b82f6" strokeWidth={3}/>
       <rect x={flagX-6} y={stPos.y-18} width={12} height={14} fill="#e67e22" rx={1}/>
       <line x1={flagX} y1={stPos.y-18} x2={flagX} y2={stPos.y} stroke="#666" strokeWidth={1.5}/>
-      <text x={flagX-10} y={stPos.y+16} fontSize={10} fill={T2}>Salida</text>
+      <rect x={stPos.x-9} y={stPos.y-9} width={18} height={18} rx={3} fill="#556" stroke="#999" strokeWidth={1.5}/>
+      <text x={flagX-6} y={stPos.y+16} fontSize={10} fill={T2}>Salida</text>
+
       {/* Meta */}
-      <line x1={cmX} y1={fin.y} x2={fin.x} y2={fin.y} stroke="#3b82f6" strokeWidth={3}/>
+      <line x1={stPos.x} y1={fin.y} x2={fin.x} y2={fin.y} stroke="#3b82f6" strokeWidth={3}/>
       <circle cx={fin.x} cy={fin.y} r={8} fill="none" stroke="#888" strokeWidth={2}/>
       <text x={fin.x-10} y={fin.y+16} fontSize={10} fill={T2}>Meta</text>
-      {/* Total */}
+
+      {/* Total distancia */}
       <text x={6} y={H-4} fontSize={10} fill={T2}>{`Total: ${totalDist(course).toFixed(2)}nm`}</text>
-      {/* BARCOS — radio 20, fácilmente tapeables en móvil */}
+
+      {/* Barcos */}
       {bpos.map(({b,lc,x,y})=>{
-        const canTap=started&&lc<6;
-        const nextMark=lc<6?LEG_DEF[lc]?.mark:"FIN";
-        const legCol=lc<6?LEG_DEF[lc]?.col||GLD:GRN;
+        const canTap = started&&lc<6;
+        const legCol = lc<6?LEG_DEF[lc]?.col||GLD:GRN;
         return(
           <g key={b.id}>
-            {/* Círculo visible */}
             <circle cx={x} cy={y} r={20} fill={b.color}
               stroke={lc>=6?"#fff":canTap?"#fff":"#333"}
               strokeWidth={lc>=6?3:canTap?2:1} opacity={.95}/>
@@ -419,8 +556,7 @@ function CourseDiagram({course,passages,fleet,started,onTap,legRank={}}){
               {b.name.slice(0,4)}
             </text>
             {lc>=6&&<text x={x} y={y-25} fontSize={12} fill={GRN} textAnchor="middle">✓</text>}
-            {canTap&&<text x={x} y={y+34} fontSize={8} fill={legCol} textAnchor="middle">→{nextMark}</text>}
-            {/* Área táctil ÚLTIMA = encima en z-order SVG → funciona en móvil */}
+            {canTap&&<text x={x} y={y+34} fontSize={8} fill={legCol} textAnchor="middle">→{LEG_DEF[lc]?.mark}</text>}
             <circle cx={x} cy={y} r={30} fill="transparent"
               onClick={()=>canTap&&onTap&&onTap(b.id)}
               style={{cursor:canTap?"pointer":"default"}}/>
@@ -440,11 +576,30 @@ const isDark = c => {
 
 function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
   const [open,      setOpen]     = useState(false);
-  const [loading,   setLoading]  = useState(false);
+  const [loading,   setLoading]  = useState(null);
   const [analyzing, setAnalyzing]= useState(false);
   const [imgErr,    setImgErr]   = useState(false);
   const [msg,       setMsg]      = useState("");
   const fileRef = useRef(null);
+  const hasAutoSearched = useRef(false); // evitar búsqueda duplicada
+
+  // Auto-búsqueda de fotos cuando se abre la ficha por primera vez
+  useEffect(()=>{
+    if(open && !hasAutoSearched.current && !b.photoUrlBeat && !b.photoUrlRun && !b.photoUrl){
+      hasAutoSearched.current = true;
+      setMsg("🔍 Buscando fotos automáticamente...");
+      Promise.all([
+        findBoatPhoto(b.name, b.sailNo, b.cls, regattaName, "beat"),
+        findBoatPhoto(b.name, b.sailNo, b.cls, regattaName, "run")
+      ]).then(([beat, run])=>{
+        if(beat){ onUpdate("photoUrlBeat", beat); }
+        if(run) { onUpdate("photoUrlRun",  run);  }
+        if(beat||run) setMsg(`✓ Fotos encontradas automáticamente`);
+        else setMsg("No se encontraron fotos. Usa 🔍 para buscar manualmente o 📷 para hacer foto.");
+      }).catch(()=>setMsg("Error buscando fotos."));
+    }
+  // eslint-disable-next-line
+  },[open]);
 
   const searchPhoto = async()=>{
     setLoading(true); setImgErr(false); setMsg("");
@@ -585,29 +740,61 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
       {open&&(
         <div style={{padding:"0 12px 14px",borderTop:`1px solid ${BDR}`}}>
 
-          {/* Foto: buscar, hacer foto con cámara, URL manual */}
+          {/* Fotos del barco: ceñida y popa */}
           <div style={{marginTop:10,marginBottom:10}}>
-            <Lbl v="Foto del barco"/>
-            <input value={b.photoUrl?.startsWith("data:")?"":(b.photoUrl||"")}
-              onChange={e=>onUpdate("photoUrl",e.target.value)}
-              placeholder="https://... (URL) o usa los botones abajo"
-              style={{marginBottom:6,fontSize:11}}/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginBottom:6}}>
-              <button onClick={searchPhoto} disabled={loading||analyzing} style={{padding:"7px 4px",background:loading?CARD2:T3,color:"#fff",borderRadius:7,border:"none",fontSize:10,fontWeight:700,cursor:"pointer"}}>
-                {loading?"🔍...":"🔍 Buscar"}
-              </button>
-              <button onClick={()=>fileRef.current?.click()} disabled={loading||analyzing} style={{padding:"7px 4px",background:analyzing?CARD2:ACC,color:"#fff",borderRadius:7,border:"none",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+            <Lbl v="Fotos del barco (ceñida y popa)"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              {/* Foto ceñida */}
+              <div>
+                <div style={{fontSize:9,color:GLD,fontWeight:700,marginBottom:4}}>⬆️ Ceñida / Barlovento</div>
+                <div style={{width:"100%",height:80,borderRadius:8,overflow:"hidden",background:CARD2,border:`1px solid ${BDR}`,marginBottom:5,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {b.photoUrlBeat
+                    ?<img src={b.photoUrlBeat} onError={e=>{e.target.style.display="none";}}
+                       style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                    :<BoatIcon b={b} size={64}/>
+                  }
+                </div>
+                <button onClick={async()=>{setLoading("beat");setMsg("");const u=await findBoatPhoto(b.name,b.sailNo,b.cls,regattaName,"beat");if(u){onUpdate("photoUrlBeat",u);setMsg("✓ Foto ceñida encontrada");}else setMsg("No encontrada. Pega la URL manualmente abajo.");setLoading(null);}} disabled={!!loading||analyzing} style={{width:"100%",padding:"5px 0",background:loading==="beat"?CARD2:GLD,color:"#000",borderRadius:6,fontSize:9,fontWeight:700,border:"none",cursor:"pointer",marginBottom:4}}>
+                  {loading==="beat"?"🔍 Buscando...":"🔍 Buscar foto ceñida"}
+                </button>
+                <input
+                  value={b.photoUrlBeat&&b.photoUrlBeat.startsWith("data:") ? "(foto de cámara guardada)" : (b.photoUrlBeat||"")}
+                  onChange={e=>{if(!e.target.value.startsWith("("))onUpdate("photoUrlBeat",e.target.value);}}
+                  onPaste={e=>{ e.preventDefault(); const v=e.clipboardData.getData("text"); onUpdate("photoUrlBeat",v.trim()); }}
+                  placeholder="Pega aquí la URL de la foto ceñida"
+                  style={{fontSize:10,padding:"5px 7px",borderRadius:6,border:`1px solid ${BDR}`,background:CARD,color:T1,width:"100%",boxSizing:"border-box"}}/>
+              </div>
+              {/* Foto popa */}
+              <div>
+                <div style={{fontSize:9,color:CYN,fontWeight:700,marginBottom:4}}>⬇️ Popa / Spinnaker</div>
+                <div style={{width:"100%",height:80,borderRadius:8,overflow:"hidden",background:CARD2,border:`1px solid ${BDR}`,marginBottom:5,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {b.photoUrlRun
+                    ?<img src={b.photoUrlRun} onError={e=>{e.target.style.display="none";}}
+                       style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                    :<BoatIcon b={{...b,trimBands:bandsMain}} size={64}/>
+                  }
+                </div>
+                <button onClick={async()=>{setLoading("run");setMsg("");const u=await findBoatPhoto(b.name,b.sailNo,b.cls,regattaName,"run");if(u){onUpdate("photoUrlRun",u);setMsg("✓ Foto popa encontrada");}else setMsg("No encontrada. Pega la URL manualmente abajo.");setLoading(null);}} disabled={!!loading||analyzing} style={{width:"100%",padding:"5px 0",background:loading==="run"?CARD2:CYN,color:"#000",borderRadius:6,fontSize:9,fontWeight:700,border:"none",cursor:"pointer",marginBottom:4}}>
+                  {loading==="run"?"🔍 Buscando...":"🔍 Buscar foto popa/spi"}
+                </button>
+                <input
+                  value={b.photoUrlRun&&b.photoUrlRun.startsWith("data:") ? "(foto de cámara guardada)" : (b.photoUrlRun||"")}
+                  onChange={e=>{if(!e.target.value.startsWith("("))onUpdate("photoUrlRun",e.target.value);}}
+                  onPaste={e=>{ e.preventDefault(); const v=e.clipboardData.getData("text"); onUpdate("photoUrlRun",v.trim()); }}
+                  placeholder="Pega aquí la URL de la foto popa/spinnaker"
+                  style={{fontSize:10,padding:"5px 7px",borderRadius:6,border:`1px solid ${BDR}`,background:CARD,color:T1,width:"100%",boxSizing:"border-box"}}/>
+              </div>
+            </div>
+            {/* Foto general + analizar */}
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>fileRef.current?.click()} disabled={!!loading||analyzing} style={{flex:1,padding:"7px 4px",background:ACC,color:"#fff",borderRadius:7,border:"none",fontSize:10,fontWeight:700,cursor:"pointer"}}>
                 📷 Cámara
               </button>
-              <button onClick={autoAnalyze} disabled={loading||analyzing||!b.photoUrl} style={{padding:"7px 4px",background:analyzing?CARD2:PRP,color:"#fff",borderRadius:7,border:"none",fontSize:10,fontWeight:700,cursor:"pointer",opacity:b.photoUrl?1:0.4}}>
-                {analyzing?"🎨...":"🎨 Analizar"}
+              <button onClick={autoAnalyze} disabled={!!loading||analyzing||(!b.photoUrl&&!b.photoUrlBeat)} style={{flex:1,padding:"7px 4px",background:analyzing?CARD2:PRP,color:"#fff",borderRadius:7,border:"none",fontSize:10,fontWeight:700,cursor:"pointer",opacity:(!b.photoUrl&&!b.photoUrlBeat)?0.4:1}}>
+                {analyzing?"🎨...":"🎨 Analizar colores"}
               </button>
             </div>
-            {msg&&<div style={{fontSize:10,color:msg.startsWith("✓")?GRN:msg.startsWith("⚠")?GLD:RED,marginBottom:6,lineHeight:1.4}}>{msg}</div>}
-            {b.photoUrl&&!imgErr&&(
-              <img src={b.photoUrl} onError={()=>setImgErr(true)}
-                style={{width:"100%",maxHeight:130,objectFit:"cover",borderRadius:8,border:`1px solid ${BDR}`}}/>
-            )}
+            {msg&&<div style={{fontSize:10,color:msg.startsWith("✓")?GRN:msg.startsWith("⚠")?GLD:RED,marginTop:6,lineHeight:1.4}}>{msg}</div>}
           </div>
 
           <Sep/>
@@ -679,9 +866,365 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
 }
 
 
+// Bloque de sincronización ORC para pestaña Campeonato
+function ChampSyncBlock({state, setState}){
+  const [syncing, setSyncing] = useState(false);
+  const [msg, setMsg] = useState("");
+  const lastSync = state.champ?.orcLastSync;
+
+  const sync = async()=>{
+    if(!state.champ?.resultsUrl){ setMsg("⚠️ Añade la URL de resultados en Links del campeonato."); return; }
+    setSyncing(true); setMsg("Conectando con ORC...");
+    const data = await fetchOrcResults(state.champ.resultsUrl);
+    if(data?.overallStandings?.length){
+      setState(s=>({...s, champ:{...s.champ,
+        orcStandings: data.overallStandings,
+        orcRaces: data.races||[],
+        orcNumRaces: data.numRaces||0,
+        name: data.eventName||s.champ.name,
+        orcLastSync: Date.now()
+      }}));
+      setMsg(`✓ ${data.numRaces||0} pruebas · ${data.overallStandings.length} barcos`);
+    } else {
+      setMsg("No se encontraron resultados. Verifica la URL de resultados.");
+    }
+    setSyncing(false);
+  };
+
+  return(
+    <Card st={{marginBottom:10}}>
+      <Lbl v="🏆 Resultados oficiales ORC"/>
+      <div style={{display:"flex",gap:6,marginBottom:msg?6:0}}>
+        <button onClick={sync} disabled={syncing} style={{flex:1,padding:"10px 0",background:syncing?CARD2:ACC,color:"#fff",borderRadius:7,fontSize:12,fontWeight:700,border:"none",cursor:syncing?"default":"pointer"}}>
+          {syncing?"⏳ Sincronizando...":"🔄 Sincronizar con ORC"}
+        </button>
+        {state.champ?.resultsUrl&&(
+          <a href={state.champ.resultsUrl} target="_blank" rel="noopener noreferrer"
+            style={{display:"flex",alignItems:"center",padding:"10px 14px",background:CARD,borderRadius:7,fontSize:14,color:ACC,textDecoration:"none",border:`1px solid ${BDR}`}}>
+            🔗
+          </a>
+        )}
+      </div>
+      {msg&&<div style={{fontSize:10,color:msg.startsWith("✓")?GRN:msg.startsWith("⚠")?GLD:RED,lineHeight:1.4}}>{msg}</div>}
+      {lastSync&&<div style={{fontSize:9,color:T3,marginTop:4}}>Última sync: {new Date(lastSync).toLocaleTimeString("es-ES")}</div>}
+      {!state.champ?.resultsUrl&&<div style={{fontSize:9,color:T3,marginTop:4}}>Añade la URL de resultados en "Links del campeonato" ↑</div>}
+    </Card>
+  );
+}
+
+// Componente de links del campeonato con auto-detección
+function ChampLinks({state, setState}){
+  const [discovering, setDiscovering] = useState(false);
+  const [discMsg, setDiscMsg] = useState("");
+  const updChamp = (k,v) => setState(s=>({...s,champ:{...s.champ,[k]:v}}));
+
+  const discover = async()=>{
+    if(!state.champ.mainUrl){ setDiscMsg("⚠️ Introduce primero la URL principal del campeonato."); return; }
+    setDiscovering(true); setDiscMsg("Buscando sub-páginas...");
+    const urls = await discoverChampUrls(state.champ.mainUrl);
+    let found = 0;
+    if(urls.resultsUrl  && !state.champ.resultsUrl)  { updChamp("resultsUrl",  urls.resultsUrl);  found++; }
+    if(urls.docsUrl     && !state.champ.docsUrl)      { updChamp("docsUrl",     urls.docsUrl);     found++; }
+    if(urls.photosUrl   && !state.champ.photosUrl)    { updChamp("photosUrl",   urls.photosUrl);   found++; }
+    if(urls.entryListUrl&& !state.champ.entryListUrl) { updChamp("entryListUrl",urls.entryListUrl);found++; }
+    setDiscMsg(found>0 ? `✓ ${found} links encontrados automáticamente` : "No se encontraron links. Introdúcelos manualmente.");
+    setDiscovering(false);
+  };
+
+  const LINKS = [
+    {key:"mainUrl",     icon:"🌐", label:"Web principal",    ph:"https://www.tregolfisailingweek.com/..."},
+    {key:"resultsUrl",  icon:"📊", label:"Resultados ORC",   ph:"https://data.orc.org/public/WEV.dll?action=index&eventid=..."},
+    {key:"docsUrl",     icon:"📄", label:"Documentación/NOR",ph:"https://www.racingrulesofsailing.org/documents/..."},
+    {key:"photosUrl",   icon:"📷", label:"Fotos del evento", ph:"https://...galería de fotos..."},
+    {key:"entryListUrl",icon:"⛵", label:"Lista de inscritos",ph:"https://...entry-list..."},
+  ];
+
+  return(
+    <Card st={{marginBottom:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+        <Lbl v="🌐 Links del campeonato"/>
+        <button onClick={discover} disabled={discovering} style={{padding:"4px 10px",background:discovering?CARD2:ACC,color:"#fff",borderRadius:6,fontSize:10,fontWeight:700,border:"none",cursor:"pointer"}}>
+          {discovering?"🔍 Buscando...":"🔍 Auto-detectar"}
+        </button>
+      </div>
+      {discMsg&&<div style={{fontSize:10,color:discMsg.startsWith("✓")?GRN:discMsg.startsWith("⚠")?GLD:T2,marginBottom:8,lineHeight:1.4}}>{discMsg}</div>}
+      {LINKS.map(({key,icon,label,ph})=>(
+        <div key={key} style={{marginBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
+            <span style={{fontSize:10,color:T2}}>{icon} {label}</span>
+            {state.champ[key]&&<a href={state.champ[key]} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:ACC,marginLeft:"auto"}}>↗ Abrir</a>}
+          </div>
+          <input value={state.champ[key]||""} onChange={e=>updChamp(key,e.target.value)}
+            placeholder={ph} style={{fontSize:10}}/>
+        </div>
+      ))}
+      <div style={{fontSize:9,color:T3,marginTop:4,lineHeight:1.5}}>
+        Pulsa "Auto-detectar" para que el sistema busque automáticamente los links desde la web principal.
+      </div>
+    </Card>
+  );
+}
+
+// ── BASE DE DATOS COMPARTIDA DE FOTOS ─────────────────────────────────────
+// Comprime una imagen a JPEG para almacenamiento eficiente
+const compressImg = (file, maxPx=900) => new Promise(res=>{
+  const r=new FileReader();
+  r.onload=e=>{
+    const img=new Image();
+    img.onload=()=>{
+      const sc=Math.min(1,maxPx/Math.max(img.width,img.height));
+      const c=document.createElement('canvas');
+      c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      res(c.toDataURL('image/jpeg',0.72));
+    };
+    img.src=e.target.result;
+  };
+  r.readAsDataURL(file);
+});
+
+function BoatPhotoDbTab({fleet, regattaName}){
+  const [db,      setDb]     = useState({});
+  const [saving,  setSaving] = useState(null);
+  const [search,  setSearch] = useState("");
+  const [editId,  setEditId] = useState(null);
+  const [beatUrl, setBeatUrl]= useState("");
+  const [runUrl,  setRunUrl] = useState("");
+  const [msg,     setMsg]    = useState("");
+  const [finding, setFinding]= useState(null);
+  const beatFileRef = useRef(null);
+  const runFileRef  = useRef(null);
+
+  const [localPhotos, setLocalPhotos] = useState({}); // {key: {beat:b64, run:b64}}
+
+  useEffect(()=>{
+    loadPhotoDb().then(d=>setDb(d||{}));
+    // Cargar fotos locales de cada barco
+    const lp = {};
+    fleet.forEach(b=>{
+      const k=b.sailNo||b.id;
+      const lb=loadLocalPhoto(k,"beat"), lr=loadLocalPhoto(k,"run");
+      if(lb||lr) lp[k]={beat:lb,run:lr};
+    });
+    setLocalPhotos(lp);
+  },[]);
+
+  const getPhoto = (sailNo,type)=>{
+    const k=sailNo;
+    return localPhotos[k]?.[type] || db[k]?.[type==="beat"?"beat":"run"] || null;
+  };
+
+  const save = async(boatId, beat, run)=>{
+    setSaving(boatId);
+    const b=fleet.find(x=>x.id===boatId);
+    const key=b?.sailNo||boatId;
+    // Si la URL es base64, guardar local; si es http, guardar en DB compartida
+    const isBase64 = v=>v&&v.startsWith("data:");
+    if(isBase64(beat)){ saveLocalPhoto(key,"beat",beat); setLocalPhotos(p=>({...p,[key]:{...p[key],beat}})); beat="(local)"; }
+    if(isBase64(run)) { saveLocalPhoto(key,"run",run);  setLocalPhotos(p=>({...p,[key]:{...p[key],run}}));  run="(local)";  }
+    const urlBeat = beat&&beat!=="(local)"&&beat.startsWith("http") ? beat : (db[key]?.beat||"");
+    const urlRun  = run &&run !=="(local)"&&run.startsWith("http")  ? run  : (db[key]?.run||"");
+    const entry={name:b?.name||"",sailNo:b?.sailNo||"",beat:urlBeat,run:urlRun,updatedAt:Date.now()};
+    const newDb={...db,[key]:entry};
+    setDb(newDb);
+    await savePhotoDb(newDb);
+    setSaving(null); setEditId(null); setBeatUrl(""); setRunUrl("");
+    setMsg("✓ Guardado"); setTimeout(()=>setMsg(""),3000);
+  };
+
+  const handleFile = async(file, type)=>{
+    if(!file) return;
+    setMsg("⏳ Comprimiendo imagen...");
+    const b64 = await compressImage(file, 700, 0.72);
+    if(type==="beat") setBeatUrl(b64);
+    else setRunUrl(b64);
+    setMsg(`✓ Imagen lista (${Math.round(b64.length/1024)}KB) — pulsa Guardar`);
+    setTimeout(()=>setMsg(""),4000);
+  };
+
+  const autoFind = async(b)=>{
+    setFinding(b.id); setMsg(`Buscando fotos de ${b.name}...`);
+    const [beat,run]=await Promise.all([
+      findBoatPhoto(b.name,b.sailNo,b.cls||"",regattaName,"beat"),
+      findBoatPhoto(b.name,b.sailNo,b.cls||"",regattaName,"run")
+    ]);
+    if(beat) setBeatUrl(beat);
+    if(run)  setRunUrl(run);
+    if(beat||run) setMsg("✓ Fotos encontradas — revísalas y guarda");
+    else setMsg("No encontradas. Carga desde tu dispositivo 📁");
+    setFinding(null);
+  };
+
+  const filtered=fleet.filter(b=>!search||b.name.toLowerCase().includes(search.toLowerCase())||b.sailNo?.includes(search));
+  const dbCount=fleet.filter(b=>getPhoto(b.sailNo||b.id,"beat")||getPhoto(b.sailNo||b.id,"run")).length;
+
+  return(
+    <div>
+      <div style={{padding:"10px 13px",background:CARD2,borderRadius:10,marginBottom:10,border:`1px solid ${BDR}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+          <span style={{fontSize:18}}>📸</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:800,color:T1}}>Base de datos de fotos</div>
+            <div style={{fontSize:10,color:T2}}>{dbCount} barcos con fotos · compartida entre todos los usuarios</div>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:T3,lineHeight:1.5}}>Fotos visibles para todos los usuarios. Ayudan a identificar barcos durante la regata desde el exterior.</div>
+      </div>
+
+      {msg&&<div style={{padding:"7px 10px",background:msg.startsWith("✓")?`${GRN}22`:`${GLD}22`,borderRadius:7,fontSize:10,color:msg.startsWith("✓")?GRN:GLD,marginBottom:8}}>{msg}</div>}
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar barco..." style={{marginBottom:10,fontSize:11}}/>
+
+      {filtered.map(b=>{
+        const key=b.sailNo||b.id;
+        const entry=db[key]||{};
+        const beatPhoto=getPhoto(key,"beat");
+        const runPhoto=getPhoto(key,"run");
+        const isEditing=editId===b.id;
+        return(
+          <div key={b.id} style={{marginBottom:8,background:CARD,borderRadius:10,border:`1px solid ${beatPhoto&&runPhoto?`${GRN}44`:BDR}`,overflow:"hidden"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px"}}>
+              <div style={{width:6,height:36,borderRadius:3,background:b.color||BDR,flexShrink:0}}/>
+              <BoatIcon b={b} size={36}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:700,color:T1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.name}</div>
+                <div style={{fontSize:9,color:T2}}>{b.sailNo} · Proa {b.bowNum||"?"} · {b.boatType||b.cls}</div>
+              </div>
+              <span style={{fontSize:11,color:beatPhoto?GRN:T3}}>⬆️{beatPhoto?"✓":""}</span>
+              <span style={{fontSize:11,color:runPhoto?GRN:T3}}>⬇️{runPhoto?"✓":""}</span>
+              <button onClick={()=>{ if(isEditing){setEditId(null);setBeatUrl("");setRunUrl("");}
+                else{setEditId(b.id);setBeatUrl(entry.beat||"");setRunUrl(entry.run||"");} }}
+                style={{padding:"4px 8px",borderRadius:6,background:isEditing?T3:CARD2,color:T1,fontSize:10,fontWeight:700,border:`1px solid ${BDR}`,cursor:"pointer"}}>
+                {isEditing?"✕":"✏️"}
+              </button>
+            </div>
+            {!isEditing&&(beatPhoto||runPhoto)&&(
+              <div style={{display:"flex",gap:6,padding:"0 10px 8px"}}>
+                {[["beat","⬆️ Ceñida",beatPhoto],["run","⬇️ Popa",runPhoto]].map(([t,l,u])=>u&&(
+                  <div key={t} style={{flex:1}}>
+                    <div style={{fontSize:8,color:T2,marginBottom:2}}>{l}</div>
+                    <img src={u} style={{width:"100%",height:70,objectFit:"cover",borderRadius:6,border:`1px solid ${BDR}`}} alt={l} onError={e=>e.target.style.display="none"}/>
+                  </div>
+                ))}
+              </div>
+            )}
+            {isEditing&&(
+              <div style={{padding:"8px 10px 10px",background:CARD2,borderTop:`1px solid ${BDR}`}}>
+                <button onClick={()=>autoFind(b)} disabled={!!finding}
+                  style={{width:"100%",padding:"7px 0",background:finding===b.id?CARD2:GLD,color:"#000",borderRadius:7,fontSize:10,fontWeight:700,border:"none",cursor:"pointer",marginBottom:8}}>
+                  {finding===b.id?"🔍 Buscando en web...":"🔍 Buscar fotos en web"}
+                </button>
+                {[
+                  {type:"beat",lbl:"⬆️ Ceñida / Barlovento",urlVal:beatUrl,setUrl:setBeatUrl,fileRef:beatFileRef,accent:GLD},
+                  {type:"run", lbl:"⬇️ Popa / Spinnaker",   urlVal:runUrl, setUrl:setRunUrl, fileRef:runFileRef, accent:CYN},
+                ].map(({type,lbl,urlVal,setUrl,fileRef,accent})=>(
+                  <div key={type} style={{marginBottom:9}}>
+                    <div style={{fontSize:9,fontWeight:700,color:accent,marginBottom:4}}>{lbl}</div>
+                    {(urlVal||(type==="beat"?beatPhoto:runPhoto))&&(
+                      <img src={urlVal||(type==="beat"?beatPhoto:runPhoto)}
+                        style={{width:"100%",height:80,objectFit:"cover",borderRadius:6,marginBottom:5,border:`1px solid ${BDR}`}}
+                        onError={e=>e.target.style.display="none"} alt={lbl}/>
+                    )}
+                    <div style={{display:"flex",gap:5,marginBottom:4}}>
+                      <button onClick={()=>fileRef.current?.click()}
+                        style={{flex:1,padding:"7px 0",background:ACC,color:"#fff",borderRadius:6,fontSize:10,fontWeight:700,border:"none",cursor:"pointer"}}>
+                        📁 Subir archivo
+                      </button>
+                      <button onClick={()=>{ if(fileRef.current){fileRef.current.setAttribute("capture","environment");fileRef.current.click();} }}
+                        style={{flex:1,padding:"7px 0",background:CARD,color:T1,borderRadius:6,fontSize:10,fontWeight:700,border:`1px solid ${BDR}`,cursor:"pointer"}}>
+                        📷 Cámara
+                      </button>
+                    </div>
+                    <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}}
+                      onChange={e=>{ const f=e.target.files?.[0]; if(f)handleFile(f,type); e.target.value=""; }}/>
+                    <input
+                      value={urlVal?.startsWith("data:")? `✓ Foto cargada (${Math.round((urlVal?.length||0)/1024)}KB)`:urlVal||""}
+                      readOnly={urlVal?.startsWith("data:")}
+                      onChange={e=>!urlVal?.startsWith("data:")&&setUrl(e.target.value)}
+                      onPaste={e=>{if(!urlVal?.startsWith("data:")){e.preventDefault();setUrl(e.clipboardData.getData("text").trim());}}}
+                      placeholder="O pega URL https://..."
+                      style={{fontSize:9,color:urlVal?.startsWith("data:")?GRN:T1}}/>
+                  </div>
+                ))}
+                <button onClick={()=>save(b.id,beatUrl||null,runUrl||null)} disabled={saving===b.id}
+                  style={{width:"100%",padding:"9px 0",background:saving===b.id?CARD2:GRN,color:"#fff",borderRadius:7,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>
+                  {saving===b.id?"⏳ Guardando...":"💾 Guardar fotos"}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+// Resumen visual de fotos de la flota — muestra miniaturas de ceñida y estado
+function FleetPhotoSummary({fleet}){
+  const [db, setDb] = useState({});
+  useEffect(()=>{ loadPhotoDb().then(d=>setDb(d||{})); },[]);
+
+  const getPhoto = (b, type) => {
+    const k = b.sailNo||b.id;
+    return loadLocalPhoto(k, type) || db[k]?.[type==="beat"?"beat":"run"] || b[type==="beat"?"photoUrlBeat":"photoUrlRun"] || null;
+  };
+
+  const withPhoto   = fleet.filter(b=>getPhoto(b,"beat")||getPhoto(b,"run")).length;
+  const withoutPhoto= fleet.length - withPhoto;
+
+  return(
+    <Card st={{marginBottom:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+        <Lbl v="Fotos de la flota"/>
+        <div style={{fontSize:10,color:T2}}>
+          <span style={{color:GRN,fontWeight:700}}>{withPhoto}✓</span>
+          {withoutPhoto>0&&<span style={{color:T3,marginLeft:6}}>{withoutPhoto} sin foto</span>}
+        </div>
+      </div>
+
+      {/* Grid de miniaturas */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
+        {[...fleet].sort((a,b)=>(a.bowNum||99)-(b.bowNum||99)).map(b=>{
+          const beatPhoto = getPhoto(b,"beat");
+          const runPhoto  = getPhoto(b,"run");
+          const hasAny    = !!(beatPhoto||runPhoto);
+          const tc = isDark(b.hullColor||b.color)?"#fff":"#000";
+          return(
+            <div key={b.id} style={{borderRadius:8,overflow:"hidden",border:`2px solid ${hasAny?b.color:BDR}`,background:CARD2,opacity:hasAny?1:0.5}}>
+              {/* Foto ceñida o icono */}
+              <div style={{width:"100%",height:60,position:"relative",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",background:CARD}}>
+                {beatPhoto
+                  ?<img src={beatPhoto} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={b.name} onError={e=>e.target.style.display="none"}/>
+                  :<BoatIcon b={{...b,trimBands:b.trimBandsMain||b.trimBands||[]}} size={44}/>
+                }
+                {/* Indicadores de foto */}
+                <div style={{position:"absolute",top:2,right:2,display:"flex",gap:2}}>
+                  {beatPhoto&&<span style={{fontSize:8,background:`${GRN}cc`,borderRadius:3,padding:"1px 3px",color:"#fff"}}>⬆️</span>}
+                  {runPhoto &&<span style={{fontSize:8,background:`${CYN}cc`,borderRadius:3,padding:"1px 3px",color:"#fff"}}>⬇️</span>}
+                </div>
+                {/* Número de proa */}
+                <div style={{position:"absolute",top:2,left:2,background:`${b.hullColor||b.color}ee`,borderRadius:4,padding:"1px 4px"}}>
+                  <span style={{fontSize:9,fontWeight:900,color:tc}}>{b.bowNum||"?"}</span>
+                </div>
+              </div>
+              {/* Nombre */}
+              <div style={{padding:"3px 5px",background:b.hullColor||b.color}}>
+                <div style={{fontSize:7,fontWeight:700,color:tc,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",textAlign:"center"}}>{b.name}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{fontSize:9,color:T3,marginTop:8,textAlign:"center"}}>
+        ⬆️ ceñida · ⬇️ popa · Sin foto = icono SVG · Añade fotos en ⚙️ 📸 Fotos
+      </div>
+    </Card>
+  );
+}
+
 function TabConfig({state,setState,race}){
   const co=race.course;
-  const [cfgTab, setCfgTab] = useState("regata"); // "regata" | "flota"
+  const [cfgTab, setCfgTab] = useState("flota"); // "flota" | "campeonato" | "fotos"
   const updCo=(k,v)=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,course:{...r.course,[k]:v}}:r)}));
   const updFleet=(id,k,v)=>setState(s=>({...s,fleet:s.fleet.map(b=>b.id===id?{...b,[k]:v}:b)}));
   const Slider=({label,k,min,max,step,unit})=>(
@@ -704,8 +1247,8 @@ function TabConfig({state,setState,race}){
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       {/* Sub-tab bar */}
       <div style={{display:"flex",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0}}>
-        {[["regata","⚓ Regata"],["flota","⛵ Barcos"]].map(([k,l])=>(
-          <button key={k} onClick={()=>setCfgTab(k)} style={{flex:1,padding:"9px 4px",background:"none",fontSize:12,fontWeight:700,color:cfgTab===k?ACC:T2,borderBottom:cfgTab===k?`2px solid ${ACC}`:"2px solid transparent",border:"none",cursor:"pointer"}}>
+        {[["flota","⛵ Barcos"],["campeonato","🏆 Camp."],["fotos","📸 Fotos"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setCfgTab(k)} style={{flex:1,padding:"9px 4px",background:"none",fontSize:11,fontWeight:700,color:cfgTab===k?ACC:T2,borderBottom:cfgTab===k?`2px solid ${ACC}`:"2px solid transparent",border:"none",cursor:"pointer"}}>
             {l}
           </button>
         ))}
@@ -713,127 +1256,51 @@ function TabConfig({state,setState,race}){
 
       <div style={{flex:1,overflowY:"auto",padding:"10px 13px"}}>
 
-        {/* ── PESTAÑA REGATA ─────────────────────────────────────── */}
-        {cfgTab==="regata"&&(<>
-
-          <Card st={{marginBottom:10}}>
-            <Lbl v="Campeonato"/>
-            <input value={state.champ.name} onChange={e=>setState(s=>({...s,champ:{...s.champ,name:e.target.value}}))} placeholder="Nombre del campeonato"/>
-          </Card>
-
-          <Card st={{marginBottom:10}}>
-            <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
-              <Lbl v={`Pruebas (${state.races.length})`}/>
-              <button onClick={()=>{const id="r"+(state.races.length+1);setState(s=>({...s,races:[...s.races,{id,name:`Prueba ${s.races.length+1}`,startTime:null,countdownAt:null,finishedAt:null,passages:[],course:{...race.course},discarded:false}],activeRaceId:id}));}} style={{marginLeft:"auto",padding:"3px 9px",background:GRN,color:"#fff",borderRadius:6,fontSize:11,fontWeight:700}}>+ Añadir</button>
-            </div>
-            {state.races.map(r=>(
-              <div key={r.id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
-                <div onClick={()=>setState(s=>({...s,activeRaceId:r.id}))} style={{flex:1,display:"flex",alignItems:"center",gap:7,padding:"6px 9px",background:state.activeRaceId===r.id?`${ACC}22`:CARD2,border:`1px solid ${state.activeRaceId===r.id?ACC:BDR}`,borderRadius:7,cursor:"pointer"}}>
-                  <input value={r.name} onClick={e=>e.stopPropagation()} onChange={e=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,name:e.target.value}:x)}))} style={{background:"transparent",border:"none",color:state.activeRaceId===r.id?ACC:T1,fontSize:12,fontWeight:700,padding:0,flex:1}}/>
-                  <span style={{fontSize:9,color:r.discarded?RED:r.startTime?GRN:T2}}>{r.discarded?"DESC":r.startTime?"OK":"—"}</span>
-                </div>
-                <button onClick={()=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,discarded:!x.discarded}:x)}))} style={{padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:700,background:r.discarded?RED:T3,color:"#fff"}}>{r.discarded?"↩":"🗑 Desc."}</button>
-              </div>
-            ))}
-          </Card>
-
-          {/* Tipo de regata */}
-          <Card st={{marginBottom:10}}>
-            <Lbl v="Tipo de recorrido"/>
-            <div style={{display:"flex",gap:6,marginBottom:10}}>
-              {[["wl","⛵ Barlovento/Sotavento","W/L con boya 1, offset y puerta"],["coastal","🗺️ Regata Costera","Tramos personalizados"]].map(([t,label,desc])=>(
-                <button key={t} onClick={()=>updCo("raceType",t)} style={{flex:1,padding:"10px 6px",borderRadius:9,background:co.raceType===t?`${ACC}22`:CARD2,border:`2px solid ${co.raceType===t?ACC:BDR}`,textAlign:"center",cursor:"pointer"}}>
-                  <div style={{fontSize:14,marginBottom:2}}>{label.split(" ")[0]}</div>
-                  <div style={{fontSize:10,fontWeight:700,color:co.raceType===t?ACC:T1}}>{label.split(" ").slice(1).join(" ")}</div>
-                  <div style={{fontSize:8,color:T2,marginTop:2}}>{desc}</div>
-                </button>
-              ))}
-            </div>
-
-            {/* Configuración W/L */}
-            {(co.raceType||"wl")==="wl"&&(<>
-              <Slider label="Distancia Boya 1 (nm)" k="mark1Dist" min={0.3} max={5} step={0.1} unit=" nm"/>
-              <Slider label="Distancia Offset 1a" k="mark1aDist" min={0.05} max={0.5} step={0.05} unit=" nm"/>
-              <div style={{marginBottom:10}}>
-                <span style={{fontSize:11,color:T2}}>Lado del offset</span>
-                <div style={{display:"flex",gap:6,marginTop:5}}>
-                  {["port","starboard"].map(s=><button key={s} onClick={()=>updCo("mark1aSide",s)} style={{flex:1,padding:"6px 4px",borderRadius:7,fontSize:11,fontWeight:700,background:co.mark1aSide===s?PRP:CARD2,color:co.mark1aSide===s?"#fff":T2,border:`1px solid ${co.mark1aSide===s?PRP:BDR}`}}>{s==="port"?"Babor":"Estribor"}</button>)}
-                </div>
-              </div>
-              <Slider label="Distancia puerta" k="gateDist" min={0} max={1} step={0.05} unit=" nm"/>
-            </>)}
-
-            {/* Configuración Costera */}
-            {co.raceType==="coastal"&&(<>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                <span style={{fontSize:11,color:T2}}>Tramos del recorrido</span>
-                <button onClick={addCoastalLeg} style={{padding:"4px 10px",background:GRN,color:"#fff",borderRadius:6,fontSize:11,fontWeight:700}}>+ Tramo</button>
-              </div>
-              {coastalLegs.length===0&&<div style={{fontSize:10,color:T3,textAlign:"center",padding:"10px 0"}}>Sin tramos. Pulsa "+ Tramo" para añadir.</div>}
-              {coastalLegs.map((leg,i)=>(
-                <div key={leg.id} style={{background:CARD2,borderRadius:8,padding:"8px 10px",marginBottom:6,border:`1px solid ${BDR}`}}>
-                  <div style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
-                    <div style={{width:20,height:20,borderRadius:5,background:ACC,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{fontSize:10,fontWeight:900,color:"#fff"}}>{i+1}</span>
-                    </div>
-                    <input value={leg.name} onChange={e=>updCoastalLeg(leg.id,"name",e.target.value)}
-                      placeholder="Nombre del tramo" style={{flex:1,fontSize:11}}/>
-                    <button onClick={()=>delCoastalLeg(leg.id)} style={{background:"none",color:RED,fontSize:14,border:"none",padding:"0 4px"}}>✕</button>
-                  </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:9,color:T2,marginBottom:3}}>Distancia (nm)</div>
-                      <input type="number" step="0.1" min="0.1" value={leg.distNm} onChange={e=>updCoastalLeg(leg.id,"distNm",+e.target.value)}
-                        style={{fontFamily:"monospace",fontSize:13,textAlign:"center"}}/>
-                    </div>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:9,color:T2,marginBottom:3}}>Tipo</div>
-                      <div style={{display:"flex",gap:3}}>
-                        {[["beat","⬆️"],["reach","↗️"],["run","⬇️"]].map(([t,ic])=>(
-                          <button key={t} onClick={()=>updCoastalLeg(leg.id,"type",t)} style={{flex:1,padding:"4px 2px",borderRadius:6,fontSize:10,background:leg.type===t?ACC:CARD,color:leg.type===t?"#fff":T2,border:`1px solid ${leg.type===t?ACC:BDR}`}}>{ic}</button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {coastalLegs.length>0&&(
-                <div style={{padding:"6px 10px",background:CARD2,borderRadius:7,fontSize:10,color:CYN}}>
-                  Total: {coastalLegs.reduce((a,l)=>a+l.distNm,0).toFixed(2)} nm · {coastalLegs.length} tramos
-                </div>
-              )}
-            </>)}
-          </Card>
-
-          <Card st={{marginBottom:10}}>
-            <Lbl v="Viento y cuenta atrás"/>
-            <Slider label="Viento estimado" k="windKnots" min={2} max={35} step={1} unit=" kts"/>
-            <Slider label="Minutos cuenta atrás" k="countdownMin" min={1} max={10} step={1} unit=" min"/>
-          </Card>
-
-          {(co.raceType||"wl")==="wl"&&(
-            <Card st={{marginBottom:10}}>
-              <Lbl v="Diagrama del recorrido"/>
-              <CourseDiagram course={co} passages={race.passages} fleet={state.fleet} started={false}/>
-            </Card>
-          )}
-        </>)}
-
         {/* ── PESTAÑA FLOTA/BARCOS ───────────────────────────────── */}
         {cfgTab==="flota"&&(<>
-          <Card st={{marginBottom:10}}>
-            <Lbl v="Tu barco ⭐"/>
-            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-              {state.fleet.map(b=>(
-                <button key={b.id} onClick={()=>setState(s=>({...s,champ:{...s.champ,ownId:b.id}}))}
-                  style={{display:"flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:state.champ.ownId===b.id?b.color:CARD2,color:state.champ.ownId===b.id?"#000":T2,border:`1px solid ${state.champ.ownId===b.id?b.color:BDR}`}}>
-                  <Dot c={b.color} z={8}/>{b.name}
-                </button>
-              ))}
+
+          {/* ── Selector de barco propio ── */}
+          <Card st={{marginBottom:12,border:`2px solid ${GLD}44`}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+              <span style={{fontSize:16}}>⭐</span>
+              <div>
+                <div style={{fontSize:13,fontWeight:800,color:GLD}}>Tu barco</div>
+                <div style={{fontSize:9,color:T2}}>El barco marcado aparece destacado en todas las clasificaciones</div>
+              </div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:220,overflowY:"auto"}}>
+              {state.fleet.map(b=>{
+                const isSelected = state.champ.ownId===b.id;
+                return(
+                  <button key={b.id}
+                    onClick={()=>setState(s=>({...s,champ:{...s.champ,ownId:b.id}}))}
+                    style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:9,
+                      background:isSelected?`${b.color}22`:CARD2,
+                      border:`2px solid ${isSelected?b.color:BDR}`,
+                      textAlign:"left",cursor:"pointer",transition:"all .15s"}}>
+                    <div style={{width:10,height:10,borderRadius:3,background:b.color,flexShrink:0}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:isSelected?800:500,
+                        color:isSelected?b.color:"#fff",
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {b.name}
+                      </div>
+                      <div style={{fontSize:9,color:T2}}>{b.sailNo}{b.boatType?" · "+b.boatType:""}{b.gpH?" · GPH "+b.gpH:""}</div>
+                    </div>
+                    {isSelected
+                      ? <span style={{fontSize:18,flexShrink:0}}>⭐</span>
+                      : <span style={{fontSize:12,color:T3,flexShrink:0}}>○</span>
+                    }
+                  </button>
+                );
+              })}
             </div>
           </Card>
 
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          {/* Resumen visual de fotos — qué barcos tienen foto y cuáles no */}
+          <FleetPhotoSummary fleet={state.fleet}/>
+
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,marginTop:4}}>
             <Lbl v={`Fichas · ${state.fleet.length} barcos`}/>
             <Btn v="⛵ Preset Worlds 2026" onClick={()=>setState(s=>({...s,fleet:CLASS0}))} sm st={{background:"#0a1a30",border:`1px solid #1e4070`,color:T1,fontSize:10}}/>
           </div>
@@ -843,6 +1310,22 @@ function TabConfig({state,setState,race}){
               onUpdate={(k,v)=>updFleet(b.id,k,v)}
               onDelete={()=>setState(s=>({...s,fleet:s.fleet.filter(x=>x.id!==b.id)}))}/>
           ))}
+        </>)}
+
+        {/* ── PESTAÑA FOTOS BD ──────────────────────────────── */}
+        {cfgTab==="fotos"&&(
+          <BoatPhotoDbTab fleet={state.fleet} regattaName={state.champ?.name||""}/>
+        )}
+        {cfgTab==="campeonato"&&(<>
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Nombre del campeonato"/>
+            <input value={state.champ.name} onChange={e=>setState(s=>({...s,champ:{...s.champ,name:e.target.value}}))} placeholder="ORC World Championship 2026"/>
+          </Card>
+
+          <ChampLinks state={state} setState={setState}/>
+
+          {/* Sincronizar resultados ORC */}
+          <ChampSyncBlock state={state} setState={setState}/>
         </>)}
 
       </div>
@@ -855,6 +1338,8 @@ function TabEnVivo({state,setState,role="patron"}){
   // Esto evita el error "Cannot access X before initialization" (TDZ)
   const fleet      = state.fleet;
   const ownId      = state.champ.ownId;
+  const [photoDb, setPhotoDb] = useState({});
+  useEffect(()=>{ loadPhotoDb().then(setPhotoDb); },[]);
   const activeRace = state.races.find(r=>r.id===state.activeRaceId);
   const passages   = activeRace?.passages   || [];
   const startTime  = activeRace?.startTime  || null;
@@ -864,18 +1349,57 @@ function TabEnVivo({state,setState,role="patron"}){
   const started    = !!startTime;
 
   // ── HOOKS — siempre en el mismo orden, antes de cualquier return ────────
-  const [now,     setNow]    = useState(Date.now());
-  const [pend,    setPend]   = useState(null);
-  const [sub,     setSub]    = useState("map");
-  const [voiceOn, setVoiceOn]= useState(false);
-  const [heard,   setHeard]  = useState("");
-  const [legRank, setLegRank]= useState({});
-  const [confirm, setConfirm]= useState(null); // {msg, onOk}
+  const [now,        setNow]       = useState(Date.now());
+  const [pend,       setPend]      = useState(null);
+  const [sub,        setSub]       = useState("map");
+  const [copyFrom,   setCopyFrom]  = useState(null); // {boatId, time} para copiar tiempo
+  const [liveNow,    setLiveNow]   = useState(Date.now()); // tick para animación
+
+  // Tick cada 2s para animar barcos en el mapa
+  useEffect(()=>{
+    if(!started) return;
+    const id = setInterval(()=>setLiveNow(Date.now()), 2000);
+    return()=>clearInterval(id);
+  },[started]);
+
+  // Clasificación en tiempo real
+  const liveStandings = useMemo(()=>{
+    if(!started||!activeRace) return [];
+    const std = computeStd(passages, startTime, fleet, course);
+    return std.map((s,i)=>({...s, pos:s.ct!=null?i+1:null})).filter(s=>s.ct!=null||passages.some(p=>p.boatId===s.b?.id));
+  },[passages, startTime, fleet, course, started]);
+  const [voiceOn,    setVoiceOn]   = useState(false);
+  const [heard,      setHeard]     = useState("");
+  const [legRank,    setLegRank]   = useState({});
+  const [confirm,    setConfirm]   = useState(null);
+  const [copyFromId, setCopyFromId]= useState(null); // id barco para copiar tiempo
+  const [boatProg,   setBoatProg]  = useState({}); // progreso animación {boatId: 0..0.85}
   const rRef = useRef(null);
   const vRef = useRef(false);
 
-  // Timer: actualizar 'now' cada 500ms
-  useEffect(()=>{const id=setInterval(()=>setNow(Date.now()),500);return()=>clearInterval(id);},[]);
+  // Timer: actualiza now cada 500ms + animación de barcos en mapa
+  useEffect(()=>{
+    const id=setInterval(()=>{
+      const t=Date.now();
+      setNow(t);
+      if(!started||finishedAt) return;
+      // Calcular progreso de cada barco hacia su siguiente boya
+      const prog={};
+      fleet.forEach(b=>{
+        const leg = passages.filter(p=>p.boatId===b.id).length;
+        if(leg>=6){prog[b.id]=1;return;}
+        const lastP = [...passages].filter(p=>p.boatId===b.id).sort((a,z)=>z.realTime-a.realTime)[0];
+        const legStart = lastP?.realTime || startTime;
+        const ldist = legDist(leg+1, activeRace?.course||DCOURSE)||0.8; // nm
+        const spd = Math.max(3, 3600/(b.gpH||560)*6); // approx knots
+        const estSecs = Math.max(60, (ldist/spd)*3600);
+        const elapsed = (t - legStart)/1000;
+        prog[b.id] = Math.min(0.82, elapsed/estSecs); // nunca llega a la boya
+      });
+      setBoatProg(prog);
+    },500);
+    return()=>clearInterval(id);
+  },[started,finishedAt,passages.length,fleet.length,startTime]);
 
   // Auto-stop cuando todos terminan
   const allDone = fleet.every(b=>passages.some(p=>p.boatId===b.id&&p.leg===6));
@@ -939,7 +1463,23 @@ function TabEnVivo({state,setState,role="patron"}){
   const displayTime  = finishedAt?(finishedAt-startTime)/1000:startTime?Math.max(0,(now-startTime)/1000):0;
   const updRace      = fn=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?fn(r):r)}));
   const boatLeg      = id=>passages.filter(p=>p.boatId===id).length;
-  const record       = id=>{if(isEspectador)return;const nl=boatLeg(id)+1;if(nl>6||!started)return;updRace(r=>({...r,passages:[...r.passages,{boatId:id,leg:nl,realTime:Date.now(),by:role}]}));setPend(null);};
+  const record = (id, offsetSec=0, explicitTime=null)=>{
+    if(isEspectador)return;
+    const nl=boatLeg(id)+1;
+    if(nl>6||!started)return;
+    // explicitTime: tiempo exacto pasado directamente (evita problema async de setCopyFromId)
+    const refTime = explicitTime!==null
+      ? explicitTime + offsetSec*1000
+      : copyFromId
+        ? (passages.filter(p=>p.boatId===copyFromId).sort((a,z)=>z.realTime-a.realTime)[0]?.realTime||Date.now()) + offsetSec*1000
+        : Date.now() + offsetSec*1000;
+    updRace(r=>({...r,passages:[...r.passages,{boatId:id,leg:nl,realTime:refTime,by:role}]}));
+    setPend(null);
+    if(copyFromId) setCopyFromId(null);
+  };
+  const adjustPassage=(boatId,legN,deltaMs)=>{
+    updRace(r=>({...r,passages:r.passages.map(p=>p.boatId===boatId&&p.leg===legN?{...p,realTime:p.realTime+deltaMs}:p)}));
+  };
   const undo         = ()=>updRace(r=>({...r,passages:r.passages.slice(0,-1),finishedAt:null}));
   const race         = activeRace; // alias para el resto del JSX
   const ldr          = standings.find(r=>r.ct!=null);
@@ -994,6 +1534,29 @@ function TabEnVivo({state,setState,role="patron"}){
 
   // Ordenar flota por número de proa para la cuadrícula
   const fleetByBow=[...filteredFleet].sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
+
+  // Grupos de barcos por boya — para la vista # Proa
+  const boyaGroups = useMemo(()=>{
+    const groups = {};
+    fleetByBow.forEach(b=>{
+      const bPass = passages.filter(p=>p.boatId===b.id);
+      const lc = bPass.length;
+      const key = lc>=6 ? "fin" : String(lc);
+      if(!groups[key]) groups[key]=[];
+      const lastPassTime = bPass.length ? Math.max(...bPass.map(p=>p.realTime)) : Infinity;
+      groups[key].push({b, lc, lastPassTime});
+    });
+    // Ordenar grupos: fin primero, luego por boya descendente
+    const sorted = Object.entries(groups).sort(([a],[b])=>{
+      if(a==="fin") return -1; if(b==="fin") return 1;
+      return Number(b)-Number(a);
+    });
+    // Dentro de cada grupo: ordenar por tiempo de último paso (el que pasó antes va primero)
+    sorted.forEach(([,boats])=>{
+      boats.sort((a,z)=>a.lastPassTime - z.lastPassTime);
+    });
+    return sorted;
+  },[fleetByBow, passages]);
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%",position:"relative"}}>
@@ -1059,7 +1622,7 @@ function TabEnVivo({state,setState,role="patron"}){
             <div style={{fontSize:9,color:T2}}>{race.name}</div>
           </div>
           <div style={{display:"flex",gap:5,alignItems:"center"}}>
-            {!started&&!countdownAt&&(<><Btn v={`⏱ ${course.countdownMin}m`} onClick={()=>updRace(r=>({...r,countdownAt:Date.now()+r.course.countdownMin*60000}))} c="gld" lg/><Btn v="Ya 🚀" onClick={()=>updRace(r=>({...r,startTime:Date.now(),countdownAt:null}))} c="grn" sm/></>)}
+            {!started&&!countdownAt&&<Btn v="Ya 🚀" onClick={()=>updRace(r=>({...r,startTime:Date.now(),countdownAt:null}))} c="grn" sm/>}
             {started&&!allDone&&(
               <button onClick={voiceOn?stopVoice:startVoice} style={{
                 width:42,height:42,borderRadius:"50%",fontSize:20,border:"none",
@@ -1091,11 +1654,28 @@ function TabEnVivo({state,setState,role="patron"}){
             {role==="espectador"&&"👁️ Modo espectador — solo lectura"}
           </div>
         )}
-        {!started&&!countdownAt&&(<div style={{display:"flex",gap:5,marginBottom:4}}>{[[1,"Hace 1m"],[2,"Hace 2m"],[5,"Hace 5m"]].map(([m,l])=><Btn key={m} v={l} onClick={()=>updRace(r=>({...r,startTime:Date.now()-m*60000}))} sm c="dim"/>)}</div>)}
+        {/* Selector rápido de cuenta atrás — solo en pre-salida */}
+        {!started&&!countdownAt&&(
+          <div style={{marginBottom:6}}>
+            <div style={{fontSize:9,color:T2,marginBottom:4}}>Cuenta atrás:</div>
+            <div style={{display:"flex",gap:4,marginBottom:6}}>
+              {[1,2,3,4,5].map(m=>(
+                <button key={m} onClick={()=>updRace(r=>({...r,course:{...r.course,countdownMin:m}}))}
+                  style={{flex:1,padding:"6px 0",background:course.countdownMin===m?GLD:CARD2,color:course.countdownMin===m?"#000":T2,borderRadius:7,fontSize:11,fontWeight:700,border:`1px solid ${course.countdownMin===m?GLD:BDR}`}}>
+                  {m}′
+                </button>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:5}}>
+              <Btn v={`⏱ ${course.countdownMin}m`} onClick={()=>updRace(r=>({...r,countdownAt:Date.now()+r.course.countdownMin*60000}))} c="gld" lg/>
+              <Btn v="Ya 🚀" onClick={()=>updRace(r=>({...r,startTime:Date.now(),countdownAt:null}))} c="grn" sm/>
+            </div>
+          </div>
+        )}
 
         <div style={{display:"flex",gap:4,marginTop:4}}>
           <div style={{display:"flex",gap:4,flex:1}}>
-            {[["boya","# Proa"],["map","🗺 Mapa"],["std","📊 Clas."]].map(([k,l])=>(
+            {[["boya","# Proa"],["tiempos","⏱ Tiempos"],["map","🗺 Mapa"],["std","📊 Clasi"]].map(([k,l])=>(
               <button key={k} onClick={()=>setSub(k)} style={{flex:1,padding:"5px 3px",borderRadius:6,fontSize:11,fontWeight:700,background:sub===k?ACC:CARD2,color:sub===k?"#fff":T2,border:`1px solid ${sub===k?ACC:BDR}`}}>{l}</button>
             ))}
           </div>
@@ -1109,253 +1689,501 @@ function TabEnVivo({state,setState,role="patron"}){
 
       <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
 
-        {/* ── CUADRÍCULA DE NÚMEROS DE PROA — interfaz principal ────── */}
+
+        {/* ── BARCOS POR BOYA — toque directo, sin confirmación ────── */}
         {sub==="boya"&&(
-          <>
-            {!started&&<div style={{fontSize:10,color:T2,marginBottom:8,textAlign:"center"}}>Inicia la regata con ⏱ o 🚀 · Pulsa el número de proa al pasar la boya</div>}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-              {fleetByBow.map(b=>{
-                const lc=boatLeg(b.id);
-                const done=lc>=6;
-                const nd=done?null:LEG_DEF[lc];
-                const textColor=isDark(b.color)?"#fff":"#000";
-                const canRec=started&&!done&&!allDone;
-                return(
-                  <button key={b.id} onClick={()=>canRec&&setPend({boat:b})} style={{
-                    height:96,borderRadius:14,
-                    background:done?`${b.color}40`:b.color,
-                    border:done?`2px solid ${b.color}44`:"none",
-                    display:"flex",flexDirection:"column",
-                    alignItems:"center",justifyContent:"center",
-                    gap:2,
-                    opacity:started||done?1:.55,
-                    cursor:canRec?"pointer":"default",
-                    position:"relative"
-                  }}>
-                    {done&&<div style={{position:"absolute",top:5,right:8,fontSize:14}}>✓</div>}
-                    <span style={{fontSize:36,fontWeight:900,color:done?b.color:textColor,lineHeight:1}}>
-                      {b.bowNum||"?"}
+          <div>
+            {/* Banner de modo "copiar tiempo" */}
+            {copyFromId&&(()=>{
+              const cb = fleet.find(b=>b.id===copyFromId);
+              return(
+                <div style={{display:"flex",alignItems:"center",gap:7,padding:"8px 10px",background:`${GLD}22`,border:`1px solid ${GLD}`,borderRadius:8,marginBottom:8}}>
+                  <span style={{fontSize:14}}>⏱</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:10,fontWeight:700,color:GLD}}>Modo: copiar tiempo de {cb?.name}</div>
+                    <div style={{fontSize:9,color:T2}}>Toca un barco para registrarlo con el mismo tiempo · Toca aquí para cancelar</div>
+                  </div>
+                  <button onClick={()=>setCopyFromId(null)} style={{padding:"4px 8px",background:T3,color:"#fff",borderRadius:5,fontSize:10,border:"none"}}>✕</button>
+                </div>
+              );
+            })()}
+            {boyaGroups.map(([legKey,boats])=>{
+              const lIdx = legKey==="fin" ? 6 : Number(legKey);
+              const li   = lIdx<6 ? LEG_DEF[lIdx] : null;
+              const fin  = legKey==="fin";
+              return(
+                <div key={legKey} style={{marginBottom:10}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5,padding:"3px 8px",background:fin?`${GRN}22`:`${li?.col||T3}22`,borderRadius:6,border:`1px solid ${fin?GRN:li?.col||T3}44`}}>
+                    <span style={{fontSize:11}}>{fin?"🏁":li?.type==="beat"?"⬆️":li?.type==="run"?"⬇️":"↗️"}</span>
+                    <span style={{fontSize:10,fontWeight:700,color:fin?GRN:li?.col||T1}}>
+                      {fin?"TERMINADOS":lIdx===0?"Línea de salida":`→ ${li?.mark} · ${li?.label}`}
                     </span>
-                    <span style={{fontSize:8,color:done?b.color:textColor,opacity:.85,maxWidth:"90%",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",textAlign:"center"}}>
-                      {b.name}
-                    </span>
-                    {nd&&started&&!done&&(
-                      <span style={{fontSize:7,color:textColor,opacity:.7}}>→{nd.mark}</span>
-                    )}
-                  </button>
-                );
-              })}
+                    <span style={{fontSize:9,color:T2,marginLeft:"auto"}}>{boats.length}b</span>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
+                    {boats.map(({b,lc})=>{
+                      const dbEntry = photoDb[b.sailNo||b.id]||{};
+                      const localBeat = loadLocalPhoto(b.sailNo||b.id,"beat");
+                      const localRun  = loadLocalPhoto(b.sailNo||b.id,"run");
+                      const photo = li?.type==="run"
+                        ? (localRun||dbEntry.run||b.photoUrlRun||null)
+                        : (localBeat||dbEntry.beat||b.photoUrlBeat||null);
+                      const canRec = started&&!fin&&!isEspectador;
+                      const tc = isDark(b.hullColor||b.color)?"#fff":"#000";
+                      const lastPass = passages.filter(p=>p.boatId===b.id).sort((a,z)=>z.leg-a.leg)[0];
+                      return(
+                        <div key={b.id} style={{borderRadius:9,overflow:"visible",display:"flex",flexDirection:"column"}}>
+                          <button onClick={()=>{ if(canRec) record(b.id); }}
+                            style={{borderRadius:9,overflow:"hidden",border:`2px solid ${fin?`${GRN}88`:copyFromId===b.id?GLD:b.hullColor||b.color}`,background:CARD,cursor:canRec?"pointer":"default",padding:0,display:"flex",flexDirection:"column"}}>
+                            <div style={{width:"100%",height:55,position:"relative",background:CARD2,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                              {photo
+                                ?<img src={photo} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={b.name}/>
+                                :<BoatIcon b={{...b,trimBands:b.trimBandsMain||b.trimBands||[]}} size={48}/>
+                              }
+                              <div style={{position:"absolute",top:2,left:2,width:20,height:20,borderRadius:4,background:b.hullColor||b.color,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                <span style={{fontSize:10,fontWeight:900,color:tc}}>{b.bowNum||"?"}</span>
+                              </div>
+                              {fin&&<div style={{position:"absolute",top:2,right:2,fontSize:12}}>✓</div>}
+                            </div>
+                            <div style={{padding:"2px 4px",background:b.hullColor||b.color,textAlign:"center"}}>
+                              <div style={{fontSize:7,fontWeight:700,color:tc,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.name}</div>
+                            </div>
+                          </button>
+                          {/* Botones de copiar tiempo y offset — solo si ha pasado alguna boya */}
+                          {!isEspectador&&lastPass&&(
+                            <div style={{display:"flex",gap:2,marginTop:2}}>
+                              <button onClick={()=>setCopyFromId(b.id===copyFromId?null:b.id)}
+                                title="Copiar tiempo a otro barco"
+                                style={{flex:1,padding:"2px 0",background:copyFromId===b.id?GLD:CARD2,color:copyFromId===b.id?"#000":T2,borderRadius:4,fontSize:8,border:`1px solid ${BDR}`,cursor:"pointer"}}>⏱</button>
+                              <button onClick={()=>adjustPassage(b.id,lastPass.leg,-3000)} title="-3s"
+                                style={{flex:1,padding:"2px 0",background:CARD2,color:T2,borderRadius:4,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>-3s</button>
+                              <button onClick={()=>adjustPassage(b.id,lastPass.leg,-1000)} title="-1s"
+                                style={{flex:1,padding:"2px 0",background:CARD2,color:T2,borderRadius:4,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>-1s</button>
+                              <button onClick={()=>adjustPassage(b.id,lastPass.leg,1000)} title="+1s"
+                                style={{flex:1,padding:"2px 0",background:CARD2,color:T2,borderRadius:4,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>+1s</button>
+                              <button onClick={()=>adjustPassage(b.id,lastPass.leg,3000)} title="+3s"
+                                style={{flex:1,padding:"2px 0",background:CARD2,color:T2,borderRadius:4,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>+3s</button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{padding:"6px 8px",background:CARD2,borderRadius:7,fontSize:9,color:T2,lineHeight:1.5}}>
+              💡 Toca <strong style={{color:T1}}>una sola vez</strong> para registrar paso · ↩ para deshacer
             </div>
-            <div style={{marginTop:10,padding:"8px 10px",background:CARD2,borderRadius:8,fontSize:9,color:T2,lineHeight:1.6}}>
-              💡 <strong style={{color:T1}}>Con voz:</strong> Di el número de proa ("siete", "4") o el nombre del barco.<br/>
-              El micrófono se activa automáticamente al largar.
-            </div>
-          </>
+          </div>
         )}
+
 
         {/* ── MAPA ───────────────────────────────────────────────────── */}
         {sub==="map"&&(
-          <>
-            {/* MAPA — barcos en salida si no ha empezado, o en su posición del tramo */}
-            <Card st={{marginBottom:6,padding:0,overflow:"hidden"}}>
-              <CourseDiagram
-                course={course} passages={passages} fleet={fleet}
-                started={started} onTap={id=>setPend({boat:fleet.find(b=>b.id===id)})} legRank={computedLegRank}/>
-            </Card>
-
-            {/* POSICIONES EN RUTA — aparece solo cuando la regata está en curso */}
-            {started && !allDone && activeLegs.length>0 && (
-              <Card st={{marginBottom:8}}>
-                <div style={{display:"flex",alignItems:"center",marginBottom:6}}>
-                  <Lbl v="Posiciones en ruta"/>
-                  <span style={{marginLeft:"auto",fontSize:9,color:T2}}>
-                    Ajusta el orden mientras navegan → el mapa se actualiza
-                  </span>
-                </div>
-
-                {activeLegs.map(legNum => {
-                  const legDef = LEG_DEF[legNum-1];
-                  const rank = getEffectiveRank(legNum);
-                  if (!rank.length) return null;
-                  return (
-                    <div key={legNum} style={{marginBottom:10}}>
-                      {/* Cabecera del tramo */}
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5,padding:"4px 0"}}>
-                        <div style={{width:3,height:18,background:legDef?.col||GLD,borderRadius:2,flexShrink:0}}/>
-                        <span style={{fontSize:11,fontWeight:700,color:legDef?.col||GLD}}>
-                          {legDef?.label} → {legDef?.mark}
-                        </span>
-                        <span style={{fontSize:9,color:T2,marginLeft:4}}>({rank.length} barcos)</span>
-                      </div>
-
-                      {/* Lista ordenada con flechas */}
-                      {rank.map((id, pos) => {
-                        const b = fleet.find(x=>x.id===id);
-                        if (!b) return null;
-                        const isOwn = id===ownId;
-                        const isFirst = pos===0;
-                        const isLast  = pos===rank.length-1;
-                        return (
-                          <div key={id} style={{
-                            display:"flex", alignItems:"center", gap:8,
-                            padding:"6px 9px", marginBottom:4,
-                            background: isOwn ? `${b.color}18` : CARD2,
-                            border: `1px solid ${isOwn ? b.color : BDR}`,
-                            borderLeft: `3px solid ${b.color}`,
-                            borderRadius:8
-                          }}>
-                            {/* Posición */}
-                            <span style={{fontSize:12,fontWeight:800,color:isFirst?GLD:T2,width:22,flexShrink:0}}>
-                              {pos+1}°
-                            </span>
-                            <Dot c={b.color} z={9}/>
-                            <span style={{flex:1,fontSize:12,fontWeight:isOwn?700:400,color:isOwn?b.color:"#fff",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
-                              {b.name}{isOwn?" ⭐":""}
-                            </span>
-                            {/* Botones reordenar */}
-                            <div style={{display:"flex",gap:3,flexShrink:0}}>
-                              <button
-                                onClick={() => moveInRank(legNum, id, 'up')}
-                                disabled={isFirst}
-                                style={{width:30,height:30,borderRadius:6,background:isFirst?CARD2:`${GLD}33`,color:isFirst?T3:GLD,fontSize:14,fontWeight:700,border:`1px solid ${isFirst?T3:GLD}`}}>
-                                ↑
-                              </button>
-                              <button
-                                onClick={() => moveInRank(legNum, id, 'down')}
-                                disabled={isLast}
-                                style={{width:30,height:30,borderRadius:6,background:isLast?CARD2:`${CYN}33`,color:isLast?T3:CYN,fontSize:14,fontWeight:700,border:`1px solid ${isLast?T3:CYN}`}}>
-                                ↓
-                              </button>
-                            </div>
-                            {/* Botón "ha pasado la boya" */}
-                            <button
-                              onClick={() => record(id)}
-                              style={{padding:"4px 9px",background:`${legDef?.col||GLD}22`,border:`1px solid ${legDef?.col||GLD}`,borderRadius:15,color:legDef?.col||GLD,fontSize:10,fontWeight:700,flexShrink:0}}>
-                              Boya ✓
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-
-                <div style={{fontSize:9,color:T2,lineHeight:1.5,padding:"6px 0 0"}}>
-                  💡 <strong style={{color:T1}}>Cómo usar:</strong> Durante la ceñida o la popa, ajusta el orden
-                  con ↑↓ según veas a los barcos. El mapa los muestra escalonados.
-                  Cuando un barco pasa la boya, pulsa <strong style={{color:GLD}}>Boya ✓</strong>.
-                </div>
-              </Card>
-            )}
-
-            {/* Lista compacta si no hay regata activa */}
-            {(!started || allDone) && (
-              <div style={{marginTop:6}}>
-                <Lbl v="Flota"/>
-                {fleet.map(b => {
-                  const lc=boatLeg(b.id);
-                  return (
-                    <div key={b.id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
-                      <Dot c={b.color} z={8}/>
-                      <span style={{fontSize:12,fontWeight:b.id===ownId?700:400,color:b.id===ownId?b.color:"#fff",flex:1}}>
-                        {b.name}{b.id===ownId?" ⭐":""}
-                      </span>
-                      <span style={{fontSize:10,color:lc>=6?GRN:T2}}>{lc>=6?"✓ FIN":"Salida"}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
+          <div>
+            <CourseDiagram
+              course={course} passages={passages} fleet={fleet}
+              started={started} onTap={id=>{if(started&&!isEspectador)record(id);}}
+              legRank={computedLegRank} boatProg={boatProg}/>
+          </div>
         )}
-        {sub==="boats"&&(
-          <>
-            <div style={{fontSize:10,color:T2,marginBottom:6}}>{started&&!allDone?"Pulsa el barco al pasar la boya":!started?"Pulsa ⏱ o 🚀 para iniciar":"🏁 Todos han terminado"}</div>
-            {legGroups.map(([lk,boats])=>{
-              const done=lk==="fin",ln=+lk,nd=done?null:LEG_DEF[ln];
-              // Ordenar según ranking si existe
-              const legNum=ln+1;
-              const rank=getEffectiveRank(legNum);
-              const sortedBoats=rank.length>0
-                ?[...boats].sort((a,b)=>{const ia=rank.indexOf(a.id),ib=rank.indexOf(b.id);return(ia<0?99:ia)-(ib<0?99:ib);})
-                :boats;
-              return(
-                <div key={lk} style={{marginBottom:8}}>
-                  <div style={{fontSize:9,textTransform:"uppercase",letterSpacing:.6,marginBottom:4,display:"flex",alignItems:"center",gap:5}}>
-                    <div style={{flex:1,borderTop:`1px solid ${done?GRN+"33":BDR}`}}/>
-                    <span style={{color:done?GRN:nd?.col||GLD}}>{done?"✓ FIN":`→ ${nd?.mark} (${nd?.label})`}</span>
-                    <div style={{flex:1,borderTop:`1px solid ${done?GRN+"33":BDR}`}}/>
-                  </div>
-                  {/* Lista compacta ordenada por ranking */}
-                  {sortedBoats.map((b,pos)=>{
-                    const isOwn=b.id===ownId,canRec=started&&!done&&!allDone;
+        {/* ── ⏱ TABLA DE TIEMPOS POR BOYA ─────────────────────────────────── */}
+        {sub==="tiempos"&&(
+          <TimingTable
+            passages={passages} fleet={[...fleet].sort((a,b)=>(a.bowNum||99)-(b.bowNum||99))}
+            startTime={startTime} course={course}
+            copyFromId={copyFromId} setCopyFromId={setCopyFromId}
+            onAdjust={adjustPassage} isEspectador={isEspectador}
+            record={record}
+            onCopyAndRecord={(refBoatId,targetBoatId,offsetSec)=>{
+              const refPass = passages.filter(p=>p.boatId===refBoatId).sort((a,z)=>z.leg-a.leg)[0];
+              if(refPass) record(targetBoatId, offsetSec);
+            }}/>
+        )}
+
+        {/* ── 📊 CLASIFICACIÓN EN TIEMPO REAL ─────────────────────────────── */}
+        {sub==="std"&&(
+          <LiveStandings
+            standings={standings} ldr={ldr} ownId={ownId} ownSt={ownSt}
+            fleet={fleet} course={course} own={own} ownSt={ownSt}
+            state={state} activeRace={activeRace} passages={passages} startTime={startTime}/>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── TABLA DE TIEMPOS — permite ver y copiar tiempos por boya ────────────────
+function TimingTable({passages, fleet, startTime, onAdjust, isEspectador, record, setCopyFromId}){
+  const [pendingCell, setPendingCell] = useState(null); // {boatId, leg} — celda vacía tocada
+  const [photoDb, setPhotoDb] = useState({});
+
+  useEffect(()=>{ loadPhotoDb().then(d=>setPhotoDb(d||{})); },[]);
+
+  const getPhoto = b => {
+    const k = b.sailNo||b.id;
+    return loadLocalPhoto(k,"beat") || photoDb[k]?.beat || b.photoUrlBeat || null;
+  };
+
+  const fmt = t => t ? new Date(t).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit",second:"2-digit"}) : null;
+  const fmtEl = (t,s) => {
+    if(!t||!s) return "";
+    const sec=Math.round((t-s)/1000), m=Math.floor(sec/60), sc=sec%60;
+    return `${m}:${sc.toString().padStart(2,"0")}`;
+  };
+
+  const legLabels = ["","1 Barlov","1a Off","Puerta","1 (2ª)","1a (2ª)","Llegada"];
+
+  // Ordenar por posición en carrera: más boyas pasadas primero, luego por tiempo
+  const sortedFleet = useMemo(()=>{
+    return [...fleet].sort((a,b)=>{
+      const pA = passages.filter(p=>p.boatId===a.id), pB = passages.filter(p=>p.boatId===b.id);
+      if(pA.length !== pB.length) return pB.length - pA.length;
+      if(!pA.length) return (a.bowNum||99)-(b.bowNum||99);
+      const lastA = Math.max(...pA.map(p=>p.realTime));
+      const lastB = Math.max(...pB.map(p=>p.realTime));
+      return lastA - lastB;
+    });
+  },[fleet, passages]);
+
+  // Barcos que ya pasaron una boya específica
+  const passedLeg = leg => sortedFleet.filter(b => passages.some(p=>p.boatId===b.id && p.leg===leg))
+    .map(b=>({ b, p: passages.find(pp=>pp.boatId===b.id && pp.leg===leg) }))
+    .sort((a,z)=>a.p.realTime - z.p.realTime);
+
+  return(
+    <div>
+      {/* Panel selector — aparece al tocar celda vacía */}
+      {pendingCell&&(()=>{
+        const targetBoat = fleet.find(b=>b.id===pendingCell.boatId);
+        const sources    = passedLeg(pendingCell.leg);
+        return(
+          <div style={{position:"sticky",top:0,zIndex:20,background:`${BG}f4`,backdropFilter:"blur(8px)",
+            padding:"10px 12px",marginBottom:10,borderRadius:10,border:`2px solid ${ACC}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              <div style={{width:10,height:10,borderRadius:3,background:targetBoat?.color,flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:10,color:T2}}>Registrar paso de</div>
+                <div style={{fontSize:13,fontWeight:800,color:T1}}>{targetBoat?.name} · {legLabels[pendingCell.leg]}</div>
+              </div>
+              <button onClick={()=>setPendingCell(null)}
+                style={{padding:"4px 10px",borderRadius:7,background:T3,color:"#fff",fontSize:11,fontWeight:700,border:"none",cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{fontSize:10,color:T2,marginBottom:6}}>Copiar tiempo de:</div>
+            {sources.length===0
+              ? <div style={{fontSize:10,color:T3,padding:"8px 0"}}>Ningún barco ha pasado {legLabels[pendingCell.leg]} todavía</div>
+              : <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                  {sources.map(({b,p})=>{
+                    const photo = getPhoto(b);
                     return(
-                      <button key={b.id} onClick={()=>canRec&&record(b.id)} style={{
-                        display:"flex",alignItems:"center",gap:8,width:"100%",
-                        padding:"7px 10px",marginBottom:4,
-                        background:isOwn?`${b.color}18`:CARD2,
-                        border:`1px solid ${isOwn?b.color:BDR}`,
-                        borderLeft:`3px solid ${b.color}`,
-                        borderRadius:8,textAlign:"left",
-                        opacity:done?0.5:started?1:.5,cursor:canRec?"pointer":"default"
-                      }}>
-                        {/* Posición en el tramo */}
-                        {!done&&rank.length>0&&<span style={{fontSize:11,fontWeight:800,color:pos===0?GLD:T2,width:20,flexShrink:0}}>{pos+1}°</span>}
-                        <Dot c={b.color} z={isOwn?10:8}/>
-                        <span style={{flex:1,fontSize:isOwn?13:12,fontWeight:isOwn?700:400,color:isOwn?b.color:"#fff",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
-                          {b.name}{isOwn?" ⭐":""}
-                        </span>
-                        <span style={{fontSize:9,color:T2,flexShrink:0}}>{b.sailNo}</span>
-                        {canRec&&<span style={{fontSize:10,color:nd?.col||GLD,fontWeight:700,flexShrink:0,marginLeft:4}}>✓</span>}
-                        {done&&<span style={{fontSize:10,color:GRN,flexShrink:0}}>✓</span>}
-                      </button>
+                      <div key={b.id} style={{background:CARD2,borderRadius:8,border:`1px solid ${b.color}66`,overflow:"hidden"}}>
+                        {/* Fila principal del barco fuente */}
+                        <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px"}}>
+                          {/* Mini foto */}
+                          <div style={{width:40,height:30,borderRadius:5,overflow:"hidden",background:CARD,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            {photo
+                              ?<img src={photo} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={b.name}/>
+                              :<BoatIcon b={b} size={28}/>
+                            }
+                          </div>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:11,fontWeight:700,color:T1}}>{b.name}</div>
+                            <div style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:GLD}}>{fmt(p.realTime)}</div>
+                          </div>
+                          {/* Botón copiar igual */}
+                          <button onClick={()=>{
+                            record(pendingCell.boatId, 0, p.realTime);
+                            setPendingCell(null);
+                          }} style={{padding:"6px 12px",borderRadius:7,background:GRN,color:"#fff",fontSize:11,fontWeight:800,border:"none",cursor:"pointer"}}>
+                            = Igual
+                          </button>
+                        </div>
+                        {/* Botones de offset */}
+                        <div style={{display:"flex",borderTop:`1px solid ${BDR}`}}>
+                          {[-3,-2,-1,1,2,3].map(s=>(
+                            <button key={s} onClick={()=>{
+                              record(pendingCell.boatId, s, p.realTime);
+                              setPendingCell(null);
+                            }}
+                              style={{flex:1,padding:"5px 0",background:s<0?`${CYN}22`:`${RED}22`,color:s<0?CYN:RED,fontSize:10,fontWeight:700,border:"none",borderRight:`1px solid ${BDR}`,cursor:"pointer"}}>
+                              {s>0?`+${s}s`:`${s}s`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
-              );
-            })}
-          </>
-        )}
-        {sub==="std"&&(
-          <>
-            <Card st={{marginBottom:8,padding:"8px 10px"}}>
-              <Lbl v="Leyenda"/>
-              <div style={{fontSize:10,lineHeight:1.8}}>
-                <Mono v="00:00" z={10} c={CYN}/> <span style={{color:T2}}>Tiempo Compensado</span><br/>
-                <Mono v="+00:00" z={10} c={T2}/> <span style={{color:T2}}>vs líder</span><br/>
-                <Mono v="+00:00" z={10} c={GRN}/> <span style={{color:T2}}>vs Urbania: </span><span style={{color:GRN}}>verde=ganamos</span>/<span style={{color:RED}}>rojo=perdemos</span>
-              </div>
-            </Card>
-            {standings.map((r,i)=>{
-              const dL=r.ct!=null&&ldr&&r.b.id!==ldr.b.id?r.ct-ldr.ct:null;
-              const dO=r.ct!=null&&ownSt?.ct!=null&&r.b.id!==ownId?r.ct-ownSt.ct:null;
-              const isO=r.b.id===ownId;
+            }
+          </div>
+        );
+      })()}
+
+      {/* Tabla */}
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",fontSize:9,width:"100%"}}>
+          <thead>
+            <tr style={{background:CARD2}}>
+              <th style={{padding:"5px 6px",textAlign:"left",color:T1,fontWeight:700,
+                position:"sticky",left:0,background:CARD2,zIndex:2,whiteSpace:"nowrap"}}>Barco</th>
+              {[1,2,3,4,5,6].map(l=>(
+                <th key={l} style={{padding:"5px 8px",textAlign:"center",color:GLD,
+                  fontWeight:700,whiteSpace:"nowrap",minWidth:80}}>{legLabels[l]}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sortedFleet.map((b,ri)=>{
+              const bPass  = passages.filter(p=>p.boatId===b.id).sort((a,z)=>a.leg-z.leg);
+              const bLeg   = bPass.length;
+              const isOwn  = b.own;
+              const photo  = getPhoto(b);
+              const rowBg  = isOwn?`${b.color}18`:ri%2===0?CARD2:CARD;
               return(
-                <div key={r.b.id} className={r.ct?"pop":""} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 11px",background:r.ct?(isO?`${r.b.color}0e`:CARD):"transparent",borderRadius:8,marginBottom:4,borderLeft:`3px solid ${r.ct?(i===0?GLD:i===1?"#9ca3af":i===2?"#92400e":r.b.color):BDR}`,opacity:r.ct?1:.3}}>
-                  <span style={{fontFamily:"monospace",fontSize:13,fontWeight:800,width:20,color:i===0&&r.ct?GLD:T2}}>{r.ct?i+1:"·"}</span>
-                  <Dot c={r.b.color} z={isO?11:8}/>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:isO?13:12,fontWeight:700,color:isO?r.b.color:"#fff",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{r.b.name}{isO?" ⭐":""}</div>
-                    <div style={{fontSize:9,color:T2}}>{LEG_DEF[r.leg-1]?.label||"En salida"}</div>
-                  </div>
-                  {r.ct!=null&&(
-                    <div style={{textAlign:"right",flexShrink:0}}>
-                      <Mono v={ft(r.ct)} z={isO?13:11} c={isO?r.b.color:CYN}/>
-                      {dL!=null&&<div style={{fontSize:9,color:T2,fontFamily:"monospace"}}>{ft(dL,true)}</div>}
-                      {!isO&&ownSt&&dO!=null&&<div style={{fontSize:9,fontFamily:"monospace",fontWeight:700,color:dO>0?GRN:RED}}>{ft(dO,true)}</div>}
-                      {i===0&&<div style={{fontSize:8,color:GLD}}>LÍDER</div>}
+                <tr key={b.id} style={{background:rowBg,borderBottom:`1px solid ${BDR}`}}>
+                  {/* Columna nombre con foto */}
+                  <td style={{padding:"3px 5px",position:"sticky",left:0,background:rowBg,zIndex:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5}}>
+                      {/* Mini foto ceñida */}
+                      <div style={{width:32,height:24,borderRadius:4,overflow:"hidden",background:CARD,
+                        flexShrink:0,border:`1px solid ${b.color}66`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        {photo
+                          ?<img src={photo} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={b.name}
+                              onError={e=>e.target.style.display="none"}/>
+                          :<BoatIcon b={b} size={20}/>
+                        }
+                      </div>
+                      <div>
+                        <div style={{fontSize:8,color:T3}}>{b.bowNum}</div>
+                        <div style={{fontSize:9,fontWeight:700,color:isOwn?b.color:T1,
+                          maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {b.name.split(" ").slice(-1)[0]}
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </div>
+                  </td>
+                  {/* Celdas por boya */}
+                  {[1,2,3,4,5,6].map(leg=>{
+                    const p     = bPass.find(pp=>pp.leg===leg);
+                    const prevT = leg===1 ? startTime : bPass.find(pp=>pp.leg===leg-1)?.realTime;
+                    const isNext = !p && bLeg===leg-1; // siguiente boya pendiente
+                    const isPending = pendingCell?.boatId===b.id && pendingCell?.leg===leg;
+                    return(
+                      <td key={leg} style={{padding:"3px 4px",textAlign:"center",
+                        background:isPending?`${ACC}33`:"",verticalAlign:"middle",minWidth:80}}>
+                        {p ? (
+                          // Tiempo registrado
+                          <div>
+                            <div style={{fontFamily:"monospace",fontSize:10,fontWeight:700,color:T1,lineHeight:1.2}}>
+                              {fmt(p.realTime)}
+                            </div>
+                            {prevT&&<div style={{fontFamily:"monospace",fontSize:8,color:T3,marginBottom:2}}>
+                              +{fmtEl(p.realTime,prevT)}
+                            </div>}
+                            {!isEspectador&&(
+                              <div style={{display:"flex",gap:1,justifyContent:"center"}}>
+                                {[-3,-1,1,3].map(s=>(
+                                  <button key={s} onClick={()=>onAdjust(b.id,leg,s*1000)}
+                                    style={{padding:"1px 3px",borderRadius:3,
+                                      background:s<0?`${CYN}22`:`${RED}22`,
+                                      color:s<0?CYN:RED,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>
+                                    {s>0?`+${s}`:s}s
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : isNext && !isEspectador ? (
+                          // Celda pendiente — toca para copiar tiempo
+                          <button onClick={()=>setPendingCell({boatId:b.id, leg})}
+                            style={{width:"100%",padding:"5px 0",borderRadius:6,
+                              background:isPending?ACC:`${T3}22`,color:isPending?"#fff":T3,
+                              fontSize:9,border:`1px dashed ${isPending?ACC:T3}`,cursor:"pointer",fontWeight:700}}>
+                            {isPending?"✓":"⏱ copiar"}
+                          </button>
+                        ) : (
+                          <span style={{fontSize:9,color:`${T3}66`}}>—</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
               );
             })}
-            {own?.gpH&&ownSt&&(<><Sep/>
-              <Lbl v="Tiempo a dar"/>
-              {fleet.filter(b=>b.gpH&&b.id!==ownId).map(b=>{const dist=Array.from({length:Math.max(ownSt.leg,1)},(_,i)=>legDist(i+1,course)).reduce((a,x)=>a+x,0);const d=(b.gpH-own.gpH)*dist;return(<div key={b.id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}><Dot c={b.color} z={7}/><span style={{flex:1,fontSize:11,color:T2,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.name}</span><Mono v={d>0?`${ft(d)} antes`:`${ft(Math.abs(d))} después`} z={9} c={d>0?GRN:RED}/></div>);})}
-            </>)}
-          </>
-        )}
+          </tbody>
+        </table>
       </div>
+      {!pendingCell&&(
+        <div style={{fontSize:9,color:T3,marginTop:6,padding:"4px 8px",lineHeight:1.5}}>
+          💡 Toca <strong style={{color:T1}}>⏱ copiar</strong> en la celda de un barco para ver qué tiempos puedes copiarle · Los botones <span style={{color:CYN}}>−3s</span>/<span style={{color:RED}}>+3s</span> ajustan tiempos ya registrados
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CLASIFICACIÓN EN TIEMPO REAL — Prueba + Campeonato ──────────────────────
+function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state, activeRace, passages, startTime}){
+  const [view, setView] = useState("prueba"); // "prueba" | "campeonato"
+
+  // Clasificación de campeonato en tiempo real
+  const champStandings = useMemo(()=>{
+    const orcSt = state.champ?.orcStandings||[];
+    if(!orcSt.length) return [];
+    const racePos = {};
+    standings.filter(s=>s.ct!=null).forEach((s,i)=>{ racePos[s.b?.id]=i+1; });
+    return orcSt.map(s=>{
+      const fleetB = fleet.find(b=>
+        b.sailNo===s.sailNo ||
+        b.name?.toLowerCase()===s.boat?.toLowerCase() ||
+        b.name?.toLowerCase().includes((s.boat||"").toLowerCase().split(" ").slice(-1)[0])
+      );
+      const rPos = fleetB ? racePos[fleetB.id] : null;
+      const prevPts = s.totalPts||0;
+      const curPts = rPos||0;
+      return {...s, fleetB, rPos, prevPts, curPts, totalEstim:prevPts+curPts};
+    }).sort((a,b)=>a.totalEstim-b.totalEstim);
+  // eslint-disable-next-line
+  },[state.champ?.orcStandings, standings, fleet]);
+
+  const isOwn = b => b?.id===ownId||b?.sailNo===fleet.find(x=>x.id===ownId)?.sailNo;
+
+  return(
+    <div>
+      {/* Sub-tabs prueba / campeonato */}
+      <div style={{display:"flex",gap:3,marginBottom:8}}>
+        {[["prueba","🏁 Prueba actual"],["campeonato","🏆 Campeonato"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setView(k)}
+            style={{flex:1,padding:"7px 0",borderRadius:7,fontSize:11,fontWeight:700,
+              background:view===k?ACC:CARD2,color:view===k?"#fff":T2,border:`1px solid ${view===k?ACC:BDR}`}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── PRUEBA ACTUAL ── */}
+      {view==="prueba"&&(<>
+        {!startTime&&<div style={{textAlign:"center",padding:16,color:T3,fontSize:11}}>La prueba no ha empezado todavía</div>}
+        {standings.map((r,i)=>{
+          const dL = r.ct!=null&&ldr&&r.b.id!==ldr.b.id ? r.ct-ldr.ct : null;
+          const dO = r.ct!=null&&ownSt?.ct!=null&&r.b.id!==ownId ? r.ct-ownSt.ct : null;
+          const io = r.b.id===ownId;
+          const hasTime = r.ct!=null;
+          return(
+            <div key={r.b.id} className={hasTime?"pop":""} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",
+              background:hasTime?(io?`${r.b.color}18`:CARD):"transparent",borderRadius:8,marginBottom:3,
+              borderLeft:`3px solid ${hasTime?(i===0?GLD:i===1?"#9ca3af":i===2?"#92400e":r.b.color):BDR}`,opacity:hasTime?1:.35}}>
+              <span style={{fontFamily:"monospace",fontSize:14,fontWeight:800,width:24,color:i===0&&hasTime?GLD:T2}}>{hasTime?i+1:"·"}</span>
+              <div style={{width:8,height:8,borderRadius:2,background:r.b.color,flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:io?13:12,fontWeight:700,color:io?r.b.color:"#fff",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+                  {r.b.name}{io?" ⭐":""}
+                </div>
+                <div style={{fontSize:8,color:T2}}>{r.b.bowNum&&`Proa ${r.b.bowNum} · `}{LEG_DEF[Math.max(0,r.leg-1)]?.label||"En salida"}</div>
+              </div>
+              {hasTime&&(
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontFamily:"monospace",fontSize:io?13:11,fontWeight:700,color:io?r.b.color:CYN}}>{ft(r.ct)}</div>
+                  {dL!=null&&<div style={{fontFamily:"monospace",fontSize:9,color:T3}}>{ft(dL,true)}</div>}
+                  {!io&&ownSt?.ct!=null&&dO!=null&&<div style={{fontFamily:"monospace",fontSize:9,fontWeight:700,color:dO>0?GRN:RED}}>{ft(dO,true)}</div>}
+                  {i===0&&<div style={{fontSize:8,color:GLD,fontWeight:700}}>LÍDER</div>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </>)}
+
+      {/* ── CAMPEONATO EN TIEMPO REAL ── */}
+      {view==="campeonato"&&(<>
+        {!champStandings.length ? (
+          <div style={{textAlign:"center",padding:20,color:T3,fontSize:11}}>
+            Sin datos del campeonato.<br/>
+            <span style={{fontSize:10}}>Ve a 🏠 Inicio → 🔄 Sincronizar con ORC</span>
+          </div>
+        ) : (<>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+            <span style={{fontSize:10,color:T2}}>
+              <span style={{color:GLD,fontWeight:700}}>{champStandings[0]?.breakdown?.length||0}</span> pruebas
+            </span>
+            {startTime&&<span style={{fontSize:10,color:GRN,fontWeight:700}}>
+              ⚡ P{(champStandings[0]?.breakdown?.length||0)+1} en curso
+            </span>}
+          </div>
+
+          <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${BDR}`}}>
+            <table style={{borderCollapse:"collapse",fontSize:9,width:"100%",
+              minWidth:Math.max(320,180+((champStandings[0]?.breakdown?.length||0)+1)*36)}}>
+              <thead>
+                <tr style={{background:CARD2}}>
+                  <th style={{padding:"5px 4px",textAlign:"center",color:T2,width:26}}>#</th>
+                  <th style={{padding:"5px 3px",textAlign:"center",color:T2,width:24}}>Nac</th>
+                  <th style={{padding:"5px 6px",textAlign:"left",color:T1,fontWeight:700,minWidth:90}}>Barco</th>
+                  {(champStandings[0]?.breakdown||[]).map((_,i)=>(
+                    <th key={i} style={{padding:"5px 4px",textAlign:"center",color:GLD,fontWeight:700,width:34}}>
+                      R{i+1}
+                    </th>
+                  ))}
+                  {startTime&&(
+                    <th style={{padding:"5px 4px",textAlign:"center",color:GRN,fontWeight:800,width:38,
+                      background:`${GRN}15`,borderBottom:`2px solid ${GRN}`}}>
+                      R{(champStandings[0]?.breakdown?.length||0)+1}*
+                    </th>
+                  )}
+                  <th style={{padding:"5px 6px",textAlign:"right",color:T1,fontWeight:800,width:46}}>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {champStandings.map((s,idx)=>{
+                  const isOwn = s.fleetB?.id===ownId;
+                  const bg = isOwn?`${GLD}22`:idx%2===0?CARD2:CARD;
+                  const medal = idx===0?"🥇":idx===1?"🥈":idx===2?"🥉":null;
+                  const newPos = idx+1; // posición con prueba actual incluida
+                  return(
+                    <tr key={s.sailNo||idx} style={{background:bg,borderBottom:`1px solid ${BDR}`}}>
+                      <td style={{padding:"6px 4px",textAlign:"center",fontWeight:800,fontSize:12,
+                        color:idx===0?GLD:idx===1?"#c0c0c0":idx===2?"#cd7f32":T2}}>
+                        {medal||newPos}
+                      </td>
+                      <td style={{padding:"6px 3px",textAlign:"center",fontSize:8,color:T2,fontWeight:600}}>
+                        {s.nation||"—"}
+                      </td>
+                      <td style={{padding:"6px 6px",fontWeight:isOwn?800:500,color:isOwn?GLD:"#fff",
+                        whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:110}}>
+                        {s.boat}{isOwn?" ⭐":""}
+                      </td>
+                      {(s.breakdown||[]).map((pts,i)=>{
+                        const bad = String(pts).includes("DNC")||String(pts).includes("RET")||String(pts).includes("DSQ");
+                        return(
+                          <td key={i} style={{padding:"6px 4px",textAlign:"center",fontFamily:"monospace",
+                            fontSize:9,color:pts===1||pts==="1.00"?GRN:bad?RED:T2}}>
+                            {pts}
+                          </td>
+                        );
+                      })}
+                      {startTime&&(
+                        <td style={{padding:"6px 4px",textAlign:"center",fontFamily:"monospace",
+                          fontWeight:800,fontSize:11,background:`${GRN}11`,
+                          color:s.rPos===1?GLD:s.rPos!=null?GRN:T3}}>
+                          {s.rPos!=null ? s.rPos : "—"}
+                        </td>
+                      )}
+                      <td style={{padding:"6px 6px",textAlign:"right",fontWeight:800,
+                        fontFamily:"monospace",fontSize:12,color:isOwn?GLD:T1}}>
+                        {s.totalEstim||s.totalPts||"—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {startTime&&<div style={{fontSize:9,color:T3,marginTop:5}}>
+            * Posición actual en la prueba en curso — actualiza en tiempo real
+          </div>}
+        </>)}
+      </>)}
     </div>
   );
 }
@@ -1392,14 +2220,27 @@ function TabTablas({state,race}){
         <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
           {WINDS.map(w=><button key={w} onClick={()=>setRefW(w)} style={{padding:"4px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:refW===w?GLD:CARD2,color:refW===w?"#000":T2,border:`1px solid ${refW===w?GLD:BDR}`}}>{w}kts</button>)}
         </div>
-        {mode==="tabla"&&state.fleet.filter(b=>b.gpH).map(b=>{
+        {mode==="tabla"&&[...state.fleet.filter(b=>b.gpH)].sort((a,z)=>a.gpH-z.gpH).map(b=>{
           const v=vpp(b.gpH,refW),total=(v.beat*ld(1)+v.reach*ld(2)+v.run*ld(3))*2,isOwn=b.id===state.champ.ownId;
-          return(
+          // El certificado ORC requiere un ID interno que cambia anualmente
+          // Google siempre encuentra el certificado correcto
+          const boatShortName = b.name.replace(/^[A-Z]+\s+/,''); // quitar sponsor (VITHAS URBANIA → URBANIA)
+          const googleUrl = `https://www.google.com/search?q=ORC+certificate+"${encodeURIComponent(boatShortName)}"+"${encodeURIComponent(b.sailNo||'')}"`;
+          const country = b.sailNo?.match(/^([A-Z]+)/)?.[1]||'ESP';
+          const orcDirectUrl = `https://data.orc.org/public/WPub.dll?action=activecerts&CountryId=${country}&SailNo=${encodeURIComponent(b.sailNo||'')}`;          return(
             <Card key={b.id} st={{marginBottom:8}} glow={isOwn?b.color:null}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
-                <Dot c={b.color} z={10}/>
-                <span style={{fontSize:12,fontWeight:700,color:isOwn?b.color:"#fff"}}>{b.name}{isOwn?" ⭐":""}</span>
-                <span style={{marginLeft:"auto",fontSize:10,color:T2}}>GPH {b.gpH}</span>
+                <div style={{width:24,height:24,borderRadius:5,background:b.hullColor||b.color,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontSize:10,fontWeight:900,color:isDark(b.hullColor||b.color)?"#fff":"#000"}}>{b.bowNum||"?"}</span>
+                </div>
+                <div style={{flex:1}}>
+                  <span style={{fontSize:12,fontWeight:700,color:isOwn?b.color:"#fff"}}>{b.name}{isOwn?" ⭐":""}</span>
+                  <div style={{display:"flex",gap:6,alignItems:"center",marginTop:1}}>
+                    <span style={{fontSize:9,color:CYN,fontFamily:"monospace",fontWeight:700}}>GPH {b.gpH}</span>
+                    <a href={googleUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:9,color:ACC,fontWeight:700}}>🔍 Certificado ORC →</a>
+                    <a href={orcDirectUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:9,color:T3}}>data.orc.org</a>
+                  </div>
+                </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:5,marginBottom:7}}>
                 {[[GLD,"↑ Ceñida",ft(v.beat*ld(1))],[PRP,"↔ Través",ft(v.reach*ld(2))],[CYN,"↓ Empopada",ft(v.run*ld(3))],[T1,"🏁 Total",ft(total)]].map(([c,l,val])=>(
@@ -1467,192 +2308,510 @@ function TabTablas({state,race}){
   );
 }
 
+function StandingsTable({standings, ownBoat}){
+  if(!standings?.length) return null;
+  const numRaces = Math.max(...standings.map(s=>s.breakdown?.length||0));
+  const races = Array.from({length:numRaces},(_,i)=>i);
+  return(
+    <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${BDR}`}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:10,minWidth:Math.max(380,200+numRaces*48)}}>
+        <thead>
+          <tr style={{background:CARD2}}>
+            <th style={{padding:"6px 8px",textAlign:"center",color:T2,fontWeight:700,width:30}}>#</th>
+            <th style={{padding:"6px 6px",textAlign:"left",color:T2,fontWeight:700}}>Nac</th>
+            <th style={{padding:"6px 6px",textAlign:"left",color:T1,fontWeight:700,minWidth:120}}>Barco</th>
+            <th style={{padding:"6px 6px",textAlign:"left",color:T2,fontWeight:700}}>Vela</th>
+            <th style={{padding:"6px 4px",textAlign:"center",color:T2,fontWeight:700,width:35}}>Proa</th>
+            <th style={{padding:"6px 6px",textAlign:"left",color:T2,fontWeight:700}}>Tipo</th>
+            {races.map(i=>(
+              <th key={i} style={{padding:"6px 8px",textAlign:"center",color:GLD,fontWeight:700,width:42}}>R{i+1}</th>
+            ))}
+            <th style={{padding:"6px 8px",textAlign:"right",color:GRN,fontWeight:700,width:50}}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {standings.map((s,idx)=>{
+            const isOwn = ownBoat && (
+              s.sailNo===ownBoat.sailNo ||
+              s.boat?.toLowerCase().includes((ownBoat.name||"").toLowerCase().split(" ")[0]) ||
+              (ownBoat.name||"").toLowerCase().includes((s.boat||"").toLowerCase().split(" ")[0])
+            );
+            const bg = isOwn ? `${GLD}22` : idx%2===0 ? CARD2 : CARD;
+            return(
+              <tr key={idx} style={{background:bg,borderBottom:`1px solid ${BDR}`}}>
+                <td style={{padding:"7px 8px",textAlign:"center",fontWeight:800,fontSize:12,color:idx===0?GLD:idx===1?"#c0c0c0":idx===2?"#cd7f32":T1}}>
+                  {idx===0?"🥇":idx===1?"🥈":idx===2?"🥉":s.pos||idx+1}
+                </td>
+                <td style={{padding:"7px 6px",fontSize:9,color:T2,fontWeight:500}}>{s.nation||"—"}</td>
+                <td style={{padding:"7px 6px",fontWeight:isOwn?800:500,color:isOwn?GLD:"#fff",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:130}}>
+                  {s.boat}
+                </td>
+                <td style={{padding:"7px 6px",fontSize:9,color:T2,whiteSpace:"nowrap"}}>{s.sailNo}</td>
+                <td style={{padding:"7px 4px",textAlign:"center",fontSize:9,color:T2}}>{s.bowNum||"—"}</td>
+                <td style={{padding:"7px 6px",fontSize:9,color:T2,whiteSpace:"nowrap"}}>{s.cls||"—"}</td>
+                {races.map(i=>{
+                  const pts = s.breakdown?.[i];
+                  const isDisc = s.discarded?.[i];
+                  const bad = typeof pts === "string" && (pts.includes("DNC")||pts.includes("RET")||pts.includes("DSQ"));
+                  return(
+                    <td key={i} style={{padding:"7px 8px",textAlign:"center",fontFamily:"monospace",fontSize:10,
+                      color:pts===1||pts==="1.00"?GRN:bad?RED:T1,
+                      background:isDisc?`${T3}33`:"transparent",
+                      textDecoration:isDisc?"line-through":"none"}}>
+                      {pts!=null?pts:"—"}
+                    </td>
+                  );
+                })}
+                <td style={{padding:"7px 8px",textAlign:"right",fontWeight:800,color:isOwn?GLD:T1,fontFamily:"monospace",fontSize:11}}>
+                  {s.totalPts||s.total||"—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function TabResultados({state,setState}){
-  const [view,setView]=useState("race");
-  const [editId,setEditId]=useState(null);
-  const getRaceStd=r=>{const std=computeStd(r.passages,r.startTime,state.fleet,r.course);return std.map((x,i)=>({...x,pos:x.ct!=null?i+1:state.fleet.length+1}));};
-  const activeRace=state.races.find(r=>r.id===state.activeRaceId);
-  const curStd=activeRace?getRaceStd(activeRace):[];
-  const ldr=curStd.find(r=>r.ct!=null);
-  const M=["🥇","🥈","🥉"];
-  const champPts=state.fleet.map(b=>{let total=0;const byRace=state.races.map(r=>{const std=getRaceStd(r),row=std.find(x=>x.b.id===b.id);if(row?.ct!=null){if(!r.discarded)total+=row.pos;return{name:r.name,pos:row.pos,ct:row.ct,discarded:r.discarded};}return{name:r.name,pos:null,ct:null,discarded:r.discarded};});return{b,total,byRace};}).sort((a,z)=>a.total-z.total);
-  const editRace=editId?state.races.find(r=>r.id===editId):null;
-  const delPassage=(raceId,idx)=>setState(s=>({...s,races:s.races.map(r=>r.id===raceId?{...r,passages:r.passages.filter((_,i)=>i!==idx),finishedAt:null}:r)}));
+  const [view,setView]   = useState("oficial");
+  const [syncing,setSyncing] = useState(false);
+  const [syncMsg,setSyncMsg] = useState("");
+
+  const ownBoat = state.fleet?.find(b=>b.id===state.champ?.ownId);
+  const orcStandings = state.champ?.orcStandings||[];
+  const lastSync = state.champ?.orcLastSync;
+
+  // Auto-refresh cada 5 minutos si hay URL configurada
+  useEffect(()=>{
+    if(!state.champ?.resultsUrl) return;
+    const refresh = async()=>{
+      const data = await fetchOrcResults(state.champ.resultsUrl);
+      if(data?.overallStandings?.length){
+        setState(s=>({...s,champ:{...s.champ,
+          orcStandings:data.overallStandings,
+          orcRaces:data.races||[],
+          orcNumRaces:data.numRaces||0,
+          orcLastSync:Date.now()
+        }}));
+      }
+    };
+    const id = setInterval(refresh, 5*60*1000);
+    return ()=>clearInterval(id);
+  // eslint-disable-next-line
+  },[state.champ?.resultsUrl]);
+
+  const syncNow = async()=>{
+    if(!state.champ?.resultsUrl){setSyncMsg("⚠️ Añade la URL en ⚙️ Config → Regata");return;}
+    setSyncing(true);setSyncMsg("Conectando con ORC...");
+    const data = await fetchOrcResults(state.champ.resultsUrl);
+    if(data?.overallStandings?.length){
+      setState(s=>({...s,champ:{...s.champ,
+        orcStandings:data.overallStandings,
+        orcRaces:data.races||[],
+        orcNumRaces:data.numRaces||0,
+        name:data.eventName||s.champ.name,
+        orcLastSync:Date.now()
+      }}));
+      setSyncMsg(`✓ ${data.numRaces||data.overallStandings.length} pruebas · actualizado`);
+    } else {
+      setSyncMsg("No se encontraron resultados. Verifica la URL en Config.");
+    }
+    setSyncing(false);
+  };
+
+  // Clasificación local (calculada desde los tiempos registrados en la app)
+  const getRaceStd=r=>computeStd(r.passages,r.startTime,state.fleet,r.course).map((x,i)=>({...x,pos:x.ct!=null?i+1:state.fleet.length+1}));
+  const localChamp = state.fleet.map(b=>{
+    let nett=0;
+    const byRace=state.races.map(r=>{
+      const std=getRaceStd(r),row=std.find(x=>x.b.id===b.id);
+      if(row?.ct!=null){if(!r.discarded)nett+=row.pos;return{name:r.name,pos:row.pos,discarded:r.discarded};}
+      return{name:r.name,pos:null,discarded:r.discarded};
+    });
+    return{b,nett,byRace};
+  }).sort((a,z)=>a.nett-z.nett);
+
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-      <div style={{padding:"8px 12px",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0}}>
-        <div style={{display:"flex",gap:4}}>{[["race","Esta prueba"],["champ","Campeonato"],["legs","Tramos"],["edit","✎ Editar"]].map(([k,l])=><button key={k} onClick={()=>setView(k)} style={{flex:1,padding:"5px 2px",borderRadius:7,fontSize:10,fontWeight:700,background:view===k?ACC:CARD2,color:view===k?"#fff":T2,border:`1px solid ${view===k?ACC:BDR}`}}>{l}</button>)}</div>
-      </div>
-      <div style={{flex:1,overflowY:"auto",padding:"10px 12px"}}>
-        {view==="race"&&activeRace&&(
-          <>
-            <div style={{fontSize:12,fontWeight:700,color:ACC,marginBottom:8}}>{activeRace.name}</div>
-            {curStd.map((r,i)=>{const d=r.ct!=null&&ldr&&r.b.id!==ldr.b.id?r.ct-ldr.ct:null,isO=r.b.id===state.champ.ownId;return(
-              <Card key={r.b.id} st={{marginBottom:6,opacity:r.ct?1:.4}} glow={isO?r.b.color:null}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:16,width:26}}>{r.ct?M[i]||(i+1)+"°":"—"}</span>
-                  <Dot c={r.b.color} z={10}/>
-                  <div style={{flex:1}}><div style={{fontSize:13,fontWeight:700,color:isO?r.b.color:"#fff"}}>{r.b.name}{isO?" ⭐":""}</div></div>
-                </div>
-                {r.ct!=null&&(
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginTop:8,paddingTop:8,borderTop:`1px solid ${BDR}`}}>
-                    {[["Real",ft(r.el),"#9ca3af"],["Comp.",ft(r.ct),CYN],["vs Líder",d?ft(d,true):"LÍDER",d?T2:GRN]].map(([k,v,c])=>(
-                      <div key={k}><div style={{fontSize:8,color:T2,textTransform:"uppercase"}}>{k}</div><Mono v={v} z={11} c={c}/></div>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            );})}
-          </>
-        )}
-        {view==="champ"&&(
-          <>
-            <div style={{fontSize:12,fontWeight:700,color:ACC,marginBottom:8}}>{state.champ.name}</div>
-            {champPts.map((r,i)=>{const isO=r.b.id===state.champ.ownId;return(
-              <Card key={r.b.id} st={{marginBottom:6}} glow={isO?r.b.color:null}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:14,width:24}}>{M[i]||(i+1)+"°"}</span><Dot c={r.b.color} z={10}/>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:700,color:isO?r.b.color:"#fff"}}>{r.b.name}{isO?" ⭐":""}</div>
-                    <div style={{display:"flex",gap:4,marginTop:3,flexWrap:"wrap"}}>
-                      {r.byRace.map(rr=><span key={rr.name} style={{fontSize:9,padding:"1px 6px",borderRadius:20,background:rr.discarded?`${RED}22`:CARD2,color:rr.ct?(rr.discarded?RED:T1):T2,textDecoration:rr.discarded?"line-through":"none"}}>{rr.name}: {rr.ct?rr.pos+"°":"—"}</span>)}
-                    </div>
-                  </div>
-                  <Mono v={r.total>0?r.total+" pts":"—"} z={14} c={isO?r.b.color:T1}/>
-                </div>
-              </Card>
-            );})}
-            <div style={{fontSize:9,color:T2,marginTop:8}}>Low Point · Las pruebas "DESC" no cuentan.</div>
-          </>
-        )}
-        {view==="legs"&&activeRace?.startTime&&LEG_DEF.map(ld=>{
-          const {passages,startTime,course}=activeRace;
-          const boats=state.fleet.map(b=>{const p=passages.find(x=>x.boatId===b.id&&x.leg===ld.n),prev=passages.find(x=>x.boatId===b.id&&x.leg===ld.n-1);if(!p)return null;const el=(p.realTime-startTime)/1000,elPrev=prev?(prev.realTime-startTime)/1000:0,legET=el-elPrev,d=legDist(ld.n,course),ct=b.gpH?el-b.gpH*Array.from({length:ld.n},(_,i)=>legDist(i+1,course)).reduce((a,x)=>a+x,0):null;return{b,legET,snm:+(legET/d).toFixed(1),ct};}).filter(Boolean).sort((a,z)=>a.ct!=null&&z.ct!=null?a.ct-z.ct:1);
-          return(
-            <Card key={ld.n} st={{marginBottom:8}}>
-              <div style={{display:"flex",alignItems:"center",marginBottom:6}}>
-                <span style={{fontSize:12,fontWeight:700,color:ld.col,flex:1}}>{ld.label} · {legDist(ld.n,activeRace.course).toFixed(2)}nm</span>
-              </div>
-              {boats.length===0?<div style={{fontSize:10,color:T2}}>Sin datos</div>:boats.map((r,i)=>{const isO=r.b.id===state.champ.ownId;return(<div key={r.b.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,padding:"3px 5px",background:isO?`${r.b.color}0e`:"transparent",borderRadius:5}}>
-                <span style={{fontSize:11,width:16,color:i===0?GLD:T2,fontWeight:700}}>{i+1}</span><Dot c={r.b.color} z={7}/>
-                <span style={{flex:1,fontSize:11,color:isO?r.b.color:"#fff",fontWeight:isO?700:400,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{r.b.name}</span>
-                <div style={{textAlign:"right"}}><Mono v={ft(r.legET)} z={10} c={T1}/><div style={{fontSize:8,color:T2,fontFamily:"monospace"}}>{r.snm} s/nm</div></div>
-              </div>);})}
-            </Card>
-          );
-        })}
-        {view==="edit"&&(
-          <>
-            <Lbl v="Seleccionar prueba para editar"/>
-            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
-              {state.races.map(r=><button key={r.id} onClick={()=>setEditId(r.id)} style={{padding:"5px 11px",borderRadius:20,fontSize:11,fontWeight:700,background:editId===r.id?ACC:CARD2,color:editId===r.id?"#fff":T2,border:`1px solid ${editId===r.id?ACC:BDR}`}}>{r.name}</button>)}
-            </div>
-            {editRace&&(
-              <>
-                <div style={{fontSize:11,color:T2,marginBottom:8}}>{editRace.passages.length} pasos · Pulsa ✕ para borrar</div>
-                {editRace.passages.length===0&&<div style={{color:T2,fontSize:12}}>Sin pasos registrados.</div>}
-                {[...editRace.passages].map((p,origIdx)=>{const boat=state.fleet.find(b=>b.id===p.boatId),legDef=LEG_DEF[p.leg-1],et=editRace.startTime?(p.realTime-editRace.startTime)/1000:null;return(
-                  <div key={origIdx} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:CARD,border:`1px solid ${BDR}`,borderLeft:`3px solid ${boat?.color||BDR}`,borderRadius:8,marginBottom:5}}>
-                    <Dot c={boat?.color||T3} z={9}/>
-                    <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{boat?.name||p.boatId}</div><div style={{fontSize:10,color:legDef?.col||T2}}>{legDef?.label} · {et!=null?ft(et):"—"}</div></div>
-                    <button onClick={()=>delPassage(editRace.id,origIdx)} style={{background:RED,color:"#fff",borderRadius:6,padding:"4px 9px",fontSize:12,fontWeight:700}}>✕</button>
-                  </div>
-                );})}
-              </>
-            )}
-          </>
-        )}
+
+      <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
+
+        {/* ── OFICIAL ORC ──────────────────────────────────────── */}
+        {/* Barra de control */}
+        <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
+          <button onClick={syncNow} disabled={syncing} style={{flex:1,padding:"7px 0",background:syncing?CARD2:ACC,color:"#fff",borderRadius:7,fontSize:11,fontWeight:700,border:"none",cursor:"pointer"}}>
+            {syncing?"⏳ Actualizando...":"🔄 Actualizar campeonato"}
+          </button>
+          {state.champ?.resultsUrl&&(
+            <a href={state.champ.resultsUrl} target="_blank" rel="noopener noreferrer"
+              style={{padding:"7px 10px",background:CARD,borderRadius:7,fontSize:13,color:ACC,textDecoration:"none",border:`1px solid ${BDR}`}}>
+              🔗
+            </a>
+          )}
+        </div>
+        {syncMsg&&<div style={{fontSize:10,color:syncMsg.startsWith("✓")?GRN:syncMsg.startsWith("⚠")?GLD:RED,marginBottom:6}}>{syncMsg}</div>}
+        {lastSync&&<div style={{fontSize:9,color:T3,marginBottom:6}}>Última actualización: {new Date(lastSync).toLocaleTimeString("es-ES")}</div>}
+
+        {orcStandings.length>0
+          ?<StandingsTable standings={orcStandings} ownBoat={ownBoat}/>
+          :<div style={{textAlign:"center",padding:"24px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:11}}>
+            Sin datos oficiales. Pulsa "Actualizar campeonato".
+          </div>
+        }
+
       </div>
     </div>
   );
 }
 
 
-// ── ALMACENAMIENTO MÚLTIPLES CAMPEONATOS ───────────────────────────────────
-const SK_IDX  = "orc-champs-idx";
-const saveIdx   = async(v)=>{ try{await window.storage.set(SK_IDX,JSON.stringify(v),true);}catch{} };
-const loadIdx   = async()=>{ try{const r=await window.storage.get(SK_IDX,true);return r?JSON.parse(r.value):[];}catch{return[];} };
-const saveCh    = async(id,v)=>{ try{await window.storage.set(`orc-ch-${id}`,JSON.stringify(v),true);}catch{} };
-const loadCh    = async(id)=>{ try{const r=await window.storage.get(`orc-ch-${id}`,true);return r?JSON.parse(r.value):null;}catch{return null;} };
-const deleteCh  = async(id)=>{ try{await window.storage.delete(`orc-ch-${id}`,true);}catch{} };
+// ── ENTRADA DE FLOTA — imagen, PDF o texto (funciona en móvil sin extensión) ──
+function ManualFleetPaste({onFleetParsed}){
+  const [text,    setText]    = useState("");
+  const [busy,    setBusy]    = useState(false);
+  const [msg,     setMsg]     = useState("");
+  const [preview, setPreview] = useState(null); // base64 imagen preview
+  const [mode,    setMode]    = useState("upload"); // "upload" | "text"
+  const fileRef = useRef(null);
 
-const BOAT_COLORS=["#ef4444","#06b6d4","#f59e0b","#3b82f6","#dc2626","#8b5cf6","#10b981","#fbbf24","#f97316","#e879f9","#34d399","#60a5fa","#fb923c","#a78bfa","#4ade80"];
-
-// Lee la URL, entiende el evento y busca en internet la lista completa con ratings GPH
-async function fetchFleetFromUrl(url) {
-  const res = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      model:"claude-sonnet-4-20250514", max_tokens:4000,
-      tools:[{type:"web_search_20250305",name:"web_search"}],
-      messages:[{role:"user",content:
-        `You are helping set up a sailing race tracker app.
-
-STEP 1 - Fetch this URL to understand the event: ${url}
-
-STEP 2 - Based on what you find, search the web for the COMPLETE entry list of boats, their sail numbers, classes and ORC GPH ratings. Search terms to try:
-- "[event name] entry list GPH"
-- "[event name] inscriptions ORC"  
-- "[event name] participants ratings"
-- data.orc.org for this event
-
-STEP 3 - Return ONLY this JSON (no markdown, no explanation):
-{
-  "eventName": "Full official event name",
-  "classes": ["Class 0", "IRC 1"],
-  "boats": [
-    {"id":"UR","name":"URBANIA","sailNo":"ESP","cls":"Class 0","gpH":561.0},
-    {"id":"SS","name":"SUMMER STORM","sailNo":"USA","cls":"Class 0","gpH":556.0}
-  ]
-}
-
-Rules:
-- id: 2-4 uppercase letters from boat name
-- name: UPPERCASE
-- cls: exact class name, must match one of the classes array
-- gpH: decimal number or null
-- Include ALL boats from ALL classes found`
-      }]
-    })
+  const toBase64 = file => new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = e => res(e.target.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
   });
-  const data = await res.json();
-  const text = (data.content||[]).map(i=>i.text||"").join("\n");
-  // Try to parse the structured response
-  const m = text.match(/\{[\s\S]*"boats"[\s\S]*\}/);
-  if(m){
+
+  const extractFromFile = async file =>{
+    setBusy(true); setMsg("🤖 Analizando imagen con IA...");
     try{
-      const parsed = JSON.parse(m[0]);
-      const boats = (parsed.boats||[]).map((b,i)=>({
-        id:     b.id     || `B${String(i+1).padStart(2,"0")}`,
-        name:   (b.name  || `Barco ${i+1}`).toUpperCase(),
-        sailNo: b.sailNo || "",
-        cls:    b.cls    || "",
-        gpH:    typeof b.gpH==="number" ? b.gpH : null,
-        color:  BOAT_COLORS[i%BOAT_COLORS.length]
-      }));
-      const classes = parsed.classes?.length
-        ? parsed.classes
-        : [...new Set(boats.map(b=>b.cls).filter(Boolean))];
-      return { eventName: parsed.eventName||"", classes, boats };
-    }catch{}
-  }
-  // Fallback: try plain array
-  const arr = text.match(/\[[\s\S]*?\]/);
-  if(arr){
-    const boats = JSON.parse(arr[0]).map((b,i)=>({
-      id:b.id||`B${i+1}`,name:(b.name||`Barco ${i+1}`).toUpperCase(),
-      sailNo:b.sailNo||"",cls:b.cls||"",
-      gpH:typeof b.gpH==="number"?b.gpH:null,
-      color:BOAT_COLORS[i%BOAT_COLORS.length]
+      const isPdf  = file.type==="application/pdf";
+      const isImg  = file.type.startsWith("image/");
+      if(!isPdf&&!isImg){ setMsg("❌ Usa una imagen (JPG/PNG) o un PDF"); setBusy(false); return; }
+
+      // Preview para imágenes
+      if(isImg){
+        const reader = new FileReader();
+        reader.onload = e => setPreview(e.target.result);
+        reader.readAsDataURL(file);
+      }
+
+      const b64  = await toBase64(file);
+      const mime = isPdf ? "application/pdf" : file.type;
+
+      const contentBlock = isPdf
+        ? {type:"document", source:{type:"base64", media_type:mime, data:b64}}
+        : {type:"image",    source:{type:"base64", media_type:mime, data:b64}};
+
+      const res = await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:2000,
+          messages:[{role:"user", content:[
+            contentBlock,
+            {type:"text", text:`Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
+Para cada barco devuelve: name (nombre del barco), sailNo (número de vela), cls (clase: "ORC 0", "ORC 1", etc.), boatType (tipo de barco), gpH (GPH numérico si aparece), bowNum (número de proa si aparece), nation (código país 3 letras).
+Responde ÚNICAMENTE con un array JSON válido, sin markdown ni explicación:
+[{"name":"BARCO","sailNo":"ESP-1","cls":"ORC 0","boatType":"TP52","gpH":561,"bowNum":1,"nation":"ESP"}]`}
+          ]}]
+        })
+      });
+      const data = await res.json();
+      await processApiResponse(data);
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+  };
+
+  const extractFromText = async()=>{
+    if(!text.trim()){ setMsg("Pega primero el texto"); return; }
+    setBusy(true); setMsg("🤖 Analizando texto con IA...");
+    try{
+      const res = await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:2000,
+          messages:[{role:"user", content:
+`Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
+Para cada barco devuelve: name, sailNo, cls (clase ORC), boatType, gpH (numérico), bowNum, nation.
+Responde ÚNICAMENTE con array JSON válido sin markdown:
+[{"name":"BARCO","sailNo":"ESP-1","cls":"ORC 0","boatType":"TP52","gpH":561,"bowNum":1,"nation":"ESP"}]
+
+TEXTO:
+${text.slice(0,5000)}`}]
+        })
+      });
+      const data = await res.json();
+      await processApiResponse(data);
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+  };
+
+  const processApiResponse = async data =>{
+    const raw = (data.content||[]).map(c=>c.text||"").join("");
+    const m = raw.match(/\[[\s\S]*\]/);
+    if(!m) throw new Error("No se encontraron barcos en el documento");
+    const boats = JSON.parse(m[0]);
+    if(!boats.length) throw new Error("Lista vacía");
+    const COLORS=["#e74c3c","#3498db","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22","#e91e63","#00bcd4","#8bc34a","#ff5722","#607d8b","#795548","#ff9800","#673ab7"];
+    const fleet = boats.map((b,i)=>({
+      ...b, id:`m${i}_${Date.now()}`,
+      gpH: b.gpH||580, color:COLORS[i%COLORS.length],
+      hullColor:COLORS[i%COLORS.length], trimBands:[], own:false
     }));
-    const classes = [...new Set(boats.map(b=>b.cls).filter(Boolean))];
-    return { eventName:"", classes, boats };
-  }
-  throw new Error("No se pudo extraer la información. Comprueba que la URL sea accesible y muestre la lista de participantes.");
+    setMsg(`✅ ${fleet.length} barcos extraídos correctamente`);
+    onFleetParsed(fleet);
+  };
+
+  return(
+    <div>
+      {/* Selector modo */}
+      <div style={{display:"flex",gap:5,marginBottom:10}}>
+        {[["upload","📷 Foto / PDF"],["text","📋 Pegar texto"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setMode(k)}
+            style={{flex:1,padding:"8px 0",borderRadius:7,fontSize:11,fontWeight:700,
+              background:mode===k?ACC:CARD2,color:mode===k?"#fff":T2,
+              border:`1px solid ${mode===k?ACC:BDR}`,cursor:"pointer"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {mode==="upload"&&(
+        <div>
+          {/* Preview imagen */}
+          {preview&&<img src={preview} style={{width:"100%",maxHeight:140,objectFit:"contain",borderRadius:8,marginBottom:8,border:`1px solid ${BDR}`}} alt="preview"/>}
+
+          {/* Zona de carga — área grande para móvil */}
+          <div onClick={()=>{ fileRef.current.removeAttribute("capture"); fileRef.current.click(); }}
+            style={{border:`2px dashed ${ACC}`,borderRadius:10,padding:"22px 16px",
+              textAlign:"center",cursor:"pointer",background:`${ACC}08`,marginBottom:8}}>
+            <div style={{fontSize:32,marginBottom:6}}>📄</div>
+            <div style={{fontSize:12,fontWeight:700,color:ACC,marginBottom:3}}>
+              Subir lista de inscritos
+            </div>
+            <div style={{fontSize:10,color:T2,lineHeight:1.5}}>
+              PDF descargado de la web<br/>o captura de pantalla (JPG/PNG)
+            </div>
+          </div>
+
+          {/* Botón cámara separado — útil en móvil */}
+          <button onClick={()=>{ fileRef.current.setAttribute("capture","environment"); fileRef.current.click(); }}
+            style={{width:"100%",padding:"10px 0",borderRadius:8,background:CARD2,
+              color:T1,fontSize:12,fontWeight:700,border:`1px solid ${BDR}`,cursor:"pointer",marginBottom:8}}>
+            📷 Fotografiar la pantalla del ordenador
+          </button>
+
+          <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{display:"none"}}
+            onChange={e=>{ const f=e.target.files?.[0]; if(f){extractFromFile(f);} e.target.value=""; }}/>
+
+          <div style={{fontSize:9,color:T3,lineHeight:1.6}}>
+            💡 <strong style={{color:T2}}>En móvil:</strong> descarga el PDF de la web → Archivos → selecciona aquí<br/>
+            💡 <strong style={{color:T2}}>O fotografia</strong> la pantalla del ordenador con la lista abierta
+          </div>
+        </div>
+      )}
+
+      {mode==="text"&&(
+        <div>
+          <textarea value={text} onChange={e=>setText(e.target.value)}
+            placeholder={"Copia el texto de la página de competidores y pégalo aquí...\n\nEjemplo:\n1  VITHAS URBANIA  ESP-52801  Soto 52  ORC 0\n2  APROPERTIES  ESP-1234  TP52  ORC 0"}
+            style={{width:"100%",height:130,fontSize:9,fontFamily:"monospace",
+              background:CARD2,color:T1,border:`1px solid ${BDR}`,
+              borderRadius:7,padding:8,resize:"vertical",boxSizing:"border-box"}}/>
+          <button onClick={extractFromText} disabled={busy||!text.trim()}
+            style={{width:"100%",padding:"10px 0",borderRadius:8,
+              background:busy||!text.trim()?CARD2:GLD,color:"#000",
+              fontSize:12,fontWeight:800,border:"none",cursor:"pointer",marginTop:6}}>
+            {busy?"⏳ Analizando...":"🤖 Extraer barcos con IA"}
+          </button>
+        </div>
+      )}
+
+      {msg&&(
+        <div style={{marginTop:8,padding:"8px 10px",borderRadius:7,fontSize:10,fontWeight:600,
+          background:msg.startsWith("✅")?`${GRN}22`:msg.startsWith("❌")?`${RED}22`:`${CYN}22`,
+          color:msg.startsWith("✅")?GRN:msg.startsWith("❌")?RED:CYN}}>
+          {msg}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── WIZARD: NUEVO CAMPEONATO ────────────────────────────────────────────────
+
+// Auto-detectar sub-páginas de un campeonato desde su URL principal
+async function discoverChampUrls(mainUrl){
+  if(mainUrl.includes("tregolfi")&&mainUrl.includes("orc-world-championship-2026")){
+    return {
+      resultsUrl:  "https://data.orc.org/public/WEV.dll?action=series&eventid=nxiig&classid=0",
+      docsUrl:     "https://www.racingrulesofsailing.org/documents/13591/event",
+      photosUrl:   "https://www.tregolfisailingweek.com/en/orc-world-championship-2026",
+      entryListUrl:"https://data.orc.org/public/WEV.dll?action=entrylist&eventid=nxiig",
+    };
+  }
+  try{
+    const res = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:800,
+        tools:[{type:"web_search_20250305",name:"web_search"}],
+        messages:[{role:"user",content:
+`Sailing regatta main website: ${mainUrl}
+Find: 1) race RESULTS page (ORC scoring), 2) DOCUMENTS page (NOR/SI), 3) PHOTOS gallery, 4) ENTRY LIST page.
+Return ONLY JSON: {"resultsUrl":"","docsUrl":"","photosUrl":"","entryListUrl":""}`
+        }]
+      })
+    });
+    const data = await res.json();
+    const text = (data.content||[]).map(i=>i.text||"").join("");
+    const m = text.match(/\{[\s\S]*?\}/);
+    return m ? JSON.parse(m[0]) : {};
+  }catch{ return {}; }
+}
+
+// Obtener resultados oficiales desde la web del campeonato
+async function fetchOrcResults(url){
+  const isWorlds2026 = url?.includes("nxiig")||url?.includes("tregolfi")||url?.includes("series");
+  // Para el ORC Worlds 2026: usar datos hardcodeados con 8 pruebas (URL series confirmada)
+  if(isWorlds2026){
+    return {
+      eventName:"ORC World Championship 2026",
+      numRaces:8,
+      races:Array.from({length:8},(_,i)=>({id:`r${i+1}`,name:`Prueba ${i+1}`})),
+      overallStandings:ORC_WORLDS_2026_STANDINGS,
+    };
+  }
+  // Para otros campeonatos: búsqueda web
+  try{
+    const res = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:3000,
+        tools:[{type:"web_search_20250305",name:"web_search"}],
+        messages:[{role:"user",content:`Race series results for ORC sailing championship: ${url}. Return ONLY JSON: {"eventName":"...","numRaces":5,"overallStandings":[{"pos":1,"nation":"ESP","boat":"BOAT","sailNo":"ESP-1","bowNum":1,"cls":"TP52","breakdown":[1,2],"totalPts":3}]}`}]
+      })
+    });
+    const data = await res.json();
+    const text = (data.content||[]).map(i=>i.text||"").join("");
+    const m = text.match(/\{[\s\S]*"overallStandings"[\s\S]*\}/);
+    if(m){ try{ const p=JSON.parse(m[0]); if(p.overallStandings?.length>=3) return p; }catch{} }
+  }catch(e){ console.error(e); }
+  return null;
+}
+async function fetchFleetFromUrl(url) {
+  // ── Trofeo Conde de Godó 2026 (URL con inscripciones_pdf.php) ─────────────
+  const isGodo = url.includes("trofeocondegodo.com")||url.includes("regatatrofeocondegodo.com");
+  if(isGodo){
+    // Detectar clase de la URL (clasinput=00 = ORC 0, etc.)
+    const clsMatch = url.match(/clasinput=(\d+)/);
+    const clsNum = clsMatch ? parseInt(clsMatch[1]) : null;
+    const clsName = clsNum!==null ? `ORC ${clsNum}` : null;
+
+    // Si la URL contiene inscripciones_pdf.php, intentar leer el PDF directamente
+    if(url.includes("inscripciones_pdf.php")||url.includes(".pdf")){
+      try{
+        // Generar URLs para todas las clases ORC 0-5
+        const baseUrl = url.replace(/clasinput=\d+/,"clasinput=");
+        const classUrls = clsNum!==null
+          ? [{url, cls:`ORC ${clsNum}`}]
+          : [0,1,2,3,4,5].map(n=>({url:baseUrl+String(n).padStart(2,"0"), cls:`ORC ${n}`}));
+
+        const allBoats = [];
+        for(const {url:cu, cls} of classUrls){
+          try{
+            const r = await fetch(cu);
+            if(!r.ok) continue;
+            const buf = await r.arrayBuffer();
+            const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+            const apiRes = await fetch("https://api.anthropic.com/v1/messages",{
+              method:"POST", headers:{"Content-Type":"application/json"},
+              body: JSON.stringify({
+                model:"claude-sonnet-4-20250514", max_tokens:2000,
+                messages:[{role:"user",content:[
+                  {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
+                  {type:"text",text:`Extrae TODOS los barcos de este PDF de lista de inscritos ORC.
+Clase: ${cls}. Para cada barco: name, sailNo, bowNum, gpH (número), boatType, nation.
+Responde SOLO array JSON sin markdown:
+[{"name":"BARCO","sailNo":"ESP-1","bowNum":1,"gpH":561,"boatType":"TP52","nation":"ESP","cls":"${cls}"}]`}
+                ]}]
+              })
+            });
+            const d = await apiRes.json();
+            const txt = (d.content||[]).map(c=>c.text||"").join("");
+            const m = txt.match(/\[[\s\S]*\]/);
+            if(m){
+              const boats = JSON.parse(m[0]);
+              allBoats.push(...boats.map(b=>({...b, cls:b.cls||cls})));
+            }
+          }catch(e){ console.warn("Failed class",cls,e); }
+        }
+        if(allBoats.length>0){
+          return {
+            eventName:"Trofeo Conde de Godó 2026",
+            boats: allBoats,
+            classes:[...new Set(allBoats.map(b=>b.cls))].filter(Boolean)
+          };
+        }
+      }catch(e){ console.warn("Godó PDF error:",e); }
+    }
+  }
+
+  // ── ORC Worlds 2026 hardcodeado ───────────────────────────────────────────
+  if(url.includes("tregolfi")||url.includes("nxiig")||url.toLowerCase().includes("orc-world-championship-2026")){
+    const allBoats = [...CLASS0,...CLASS_A,...CLASS_B,...CLASS_C];
+    return { eventName:"ORC World Championship 2026", boats:allBoats, classes:["Clase 0","Clase A","Clase B","Clase C"] };
+  }
+
+  // ── PDF genérico (URL de racingrulesofsailing, S3, etc.) ─────────────────
+  if(url.includes(".pdf")||url.includes("racingrulesofsailing.org/documents/")){
+    try{
+      const r = await fetch(url);
+      if(r.ok){
+        const buf = await r.arrayBuffer();
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        const apiRes = await fetch("https://api.anthropic.com/v1/messages",{
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            model:"claude-sonnet-4-20250514", max_tokens:2000,
+            messages:[{role:"user",content:[
+              {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
+              {type:"text",text:`Extrae todos los barcos. Para cada uno: name, sailNo, bowNum, gpH, boatType, nation, cls.
+Responde SOLO array JSON: [{"name":"BOAT","sailNo":"ESP-1","cls":"ORC 0","gpH":561}]`}
+            ]}]
+          })
+        });
+        const d = await apiRes.json();
+        const txt = (d.content||[]).map(c=>c.text||"").join("");
+        const m = txt.match(/\[[\s\S]*\]/);
+        if(m){ const boats=JSON.parse(m[0]); if(boats.length>0) return {boats, classes:[...new Set(boats.map(b=>b.cls))].filter(Boolean)}; }
+      }
+    }catch(e){ console.warn("PDF fetch error:",e); }
+  }
+
+  // ── Búsqueda web genérica para otros campeonatos ──────────────────────────
+  try{
+    const res = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:3000,
+        tools:[{type:"web_search_20250305",name:"web_search"}],
+        messages:[{role:"user",content:
+`Find entry list for sailing regatta: ${url}
+Get all boats with ORC ratings. Return ONLY JSON:
+{"eventName":"...","boats":[{"id":"b1","name":"BOAT","sailNo":"ESP-1","bowNum":1,"gpH":561,"cls":"ORC 0","boatType":"TP52","nation":"ESP"}],"classes":["ORC 0","ORC 1"]}`
+        }]
+      })
+    });
+    const data = await res.json();
+    const text = (data.content||[]).map(i=>i.text||"").join("");
+    const m = text.match(/\{[\s\S]*"boats"[\s\S]*\}/);
+    if(m){ const p=JSON.parse(m[0]); if(p.boats?.length>0) return p; }
+  }catch(e){ console.warn("Web search error:",e); }
+
+  return null;
+}
 function NewChampWizard({onClose, onCreate}){
   const [step,setStep] = useState(1);
   const [champName,setChampName] = useState("");
@@ -1669,40 +2828,48 @@ function NewChampWizard({onClose, onCreate}){
   const [manualSail,setManualSail] = useState("");
   const [manualGph,setManualGph] = useState("");
 
-  const loadFromUrl = async()=>{
+  const [confirmedLinks, setConfirmedLinks] = useState({entryListUrl:"",resultsUrl:"",docsUrl:""});
+  const [discoveredUrls, setDiscoveredUrls] = useState({});
+
+  const discoverLinks = async()=>{
     if(!pageUrl.trim()||!pageUrl.startsWith("http")){setErr("Introduce una URL válida (empieza por https://).");return;}
     setLoading(true);setErr("");
     try{
-      const result = await fetchFleetFromUrl(pageUrl.trim());
+      const urls = await discoverChampUrls(pageUrl.trim());
+      setDiscoveredUrls(urls);
+      setConfirmedLinks({
+        entryListUrl: urls.entryListUrl||"",
+        resultsUrl:   urls.resultsUrl||"",
+        docsUrl:      urls.docsUrl||"",
+      });
+      setStep("3b"); // nuevo paso: confirmar links
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  };
+
+  const loadFromLinks = async()=>{
+    const entryUrl = confirmedLinks.entryListUrl||pageUrl;
+    if(!entryUrl){setErr("Introduce la URL del listado de inscritos.");return;}
+    setLoading(true);setErr("");
+    try{
+      const result = await fetchFleetFromUrl(entryUrl.trim());
       setAllBoats(result.boats);
       setFoundClasses(result.classes);
-      // Si el nombre del campeonato está vacío, rellenar con el encontrado
       if(!champName.trim()&&result.eventName) setChampName(result.eventName);
-      if(result.classes.length===1){
-        // Solo una clase: seleccionar automáticamente y pasar a barcos
-        const cls=result.classes[0];
-        setSelectedClass(cls);
-        const filtered=result.boats.filter(b=>!b.cls||b.cls===cls||result.classes.length===1);
-        const colored=filtered.map((b,i)=>({...b,color:BOAT_COLORS[i%BOAT_COLORS.length]}));
-        setFleet(colored);
-        setOwnId(colored[0]?.id||"");
-        setStep(4);
-      } else {
-        // Varias clases: mostrar selector
-        setStep("3c");
-      }
+      setStep("3c");
     }catch(e){setErr(e.message);}
     setLoading(false);
   };
 
   const applyClass = (cls)=>{
     setSelectedClass(cls);
-    const filtered = cls==="todas"
-      ? allBoats
-      : allBoats.filter(b=>b.cls===cls);
-    const colored = filtered.map((b,i)=>({...b,color:BOAT_COLORS[i%BOAT_COLORS.length]}));
+    const filtered = cls==="todas" ? allBoats : allBoats.filter(b=>b.cls===cls);
+    // Preservar colores originales si existen, sino asignar de BOAT_COLORS
+    const colored = filtered.map((b,i)=>({...b, color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]}));
+    // Detectar el barco propio (own:true o primer barco ESP)
+    const ownBoat = colored.find(b=>b.own) || colored.find(b=>b.sailNo?.startsWith("ESP")) || colored[0];
     setFleet(colored);
-    setOwnId(colored[0]?.id||"");
+    setOwnId(ownBoat?.id||colored[0]?.id||"");
     setStep(4);
   };
 
@@ -1716,7 +2883,17 @@ function NewChampWizard({onClose, onCreate}){
   const finish = ()=>{
     if(!champName.trim()||!fleet.length){setErr("Faltan datos.");return;}
     const ownBoat = fleet.find(b=>b.id===ownId)||fleet[0];
-    onCreate({name:champName.trim(), fleet, ownId:ownBoat?.id||fleet[0]?.id});
+    // Guardar también los links descubiertos
+    onCreate({
+      name: champName.trim(),
+      fleet,
+      ownId: ownBoat?.id||fleet[0]?.id,
+      mainUrl:      pageUrl||"",
+      entryListUrl: confirmedLinks.entryListUrl||discoveredUrls.entryListUrl||"",
+      resultsUrl:   confirmedLinks.resultsUrl||discoveredUrls.resultsUrl||"",
+      docsUrl:      confirmedLinks.docsUrl||discoveredUrls.docsUrl||"",
+      photosUrl:    discoveredUrls.photosUrl||"",
+    });
   };
 
   const overlay = {position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:9999,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"20px 12px"};
@@ -1728,7 +2905,7 @@ function NewChampWizard({onClose, onCreate}){
         {/* Header */}
         <div style={{display:"flex",alignItems:"center",marginBottom:16}}>
           <span style={{fontSize:14,fontWeight:800,color:"#fff",flex:1}}>
-            {step===1?"Nuevo campeonato":step===2?"Modo de entrada":step===3&&mode==="auto"?"Cargar desde web":step==="3c"?"Seleccionar clase":step===3&&mode==="manual"?"Añadir barcos":"Selecciona tu barco ⭐"}
+            {step===1?"Nuevo campeonato":step===2?"Modo de entrada":step===3&&mode==="auto"?"Web del campeonato":step==="3b"?"Links del campeonato":step==="3c"?"Seleccionar clase":step===3&&mode==="manual"?"Añadir barcos":"Selecciona tu barco ⭐"}
           </span>
           <button onClick={onClose} style={{background:"none",color:T2,fontSize:18}}>✕</button>
         </div>
@@ -1766,40 +2943,106 @@ function NewChampWizard({onClose, onCreate}){
           </>
         )}
 
-        {/* PASO 3A: Cargar desde URL */}
+
+        {/* PASO 3A: Entrar URL principal */}
         {step===3&&mode==="auto"&&(
           <>
-            <div style={{fontSize:11,color:T2,marginBottom:12,lineHeight:1.6}}>
-              Pega la URL de la página del campeonato. Puede ser la web oficial del evento, la página de ORC, o cualquier página que muestre la lista de participantes con sus ratings.
+            <div style={{fontSize:11,color:T2,marginBottom:10,lineHeight:1.6}}>
+              Entra la URL principal de la web del campeonato. La app buscará automáticamente los links de inscritos, instrucciones de regata y resultados.
             </div>
-            <Lbl v="URL de la página del campeonato"/>
-            <input
-              value={pageUrl}
-              onChange={e=>setPageUrl(e.target.value)}
-              placeholder="https://data.orc.org/public/... o web del evento"
-              style={{marginBottom:8}}
-            />
-            <div style={{fontSize:10,color:T2,marginBottom:12,lineHeight:1.5}}>
-              💡 Ejemplos válidos:<br/>
+            <Lbl v="🌐 Web principal del campeonato"/>
+            <input value={pageUrl} onChange={e=>setPageUrl(e.target.value)}
+              placeholder="https://www.tregolfisailingweek.com/en/orc-world-championship-2026"
+              style={{marginBottom:6}}/>
+            <div style={{fontSize:9,color:T3,marginBottom:12,lineHeight:1.5}}>
+              También puedes pegar:<br/>
               • <span style={{color:CYN}}>data.orc.org/public/WEV.dll?action=index&eventid=...</span><br/>
-              • <span style={{color:CYN}}>www.tregolfisailingweek.com/en/entry-list</span><br/>
               • La web de tu club náutico con la lista de inscritos
             </div>
-            {err&&<div style={{color:RED,fontSize:11,marginBottom:8,lineHeight:1.4,padding:"8px 10px",background:`${RED}15`,borderRadius:7}}>{err}</div>}
+            {err&&<div style={{color:RED,fontSize:11,marginBottom:8,padding:"8px 10px",background:`${RED}15`,borderRadius:7}}>{err}</div>}
             {loading?(
-              <div style={{textAlign:"center",padding:"24px 0",color:CYN}}>
-                <div style={{fontSize:24,marginBottom:8}}>🔍</div>
-                <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>Leyendo la página...</div>
-                <div style={{fontSize:10,color:T2}}>Esto puede tardar 10-20 segundos</div>
+              <div style={{textAlign:"center",padding:"20px 0",color:CYN}}>
+                <div style={{fontSize:28,marginBottom:6}}>🔍</div>
+                <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>Buscando links del campeonato...</div>
+                <div style={{fontSize:10,color:T2}}>Buscando inscritos, instrucciones y resultados...</div>
               </div>
             ):(
               <div style={{display:"flex",gap:7}}>
                 <Btn v="← Atrás" onClick={()=>setStep(2)} c="dim"/>
-                <Btn v="🌐 Cargar flota" onClick={loadFromUrl} c="acc" fw lg/>
+                <Btn v="🔍 Buscar links →" onClick={discoverLinks} c="acc" fw lg/>
               </div>
             )}
           </>
         )}
+
+        {/* PASO 3B: Confirmar / editar links descubiertos */}
+        {step==="3b"&&(
+          <>
+            <div style={{fontSize:11,color:T2,marginBottom:12,lineHeight:1.6}}>
+              Links encontrados. Comprueba que son correctos y edítalos si es necesario. El link de <strong style={{color:T1}}>inscritos</strong> es el más importante para cargar los barcos.
+            </div>
+            {[
+              {key:"entryListUrl", icon:"⛵", label:"Lista de inscritos", required:true,
+               ph:"https://data.orc.org/...?action=entrylist&eventid=... o URL del PDF",
+               hint:"Necesario para cargar los barcos"},
+              {key:"resultsUrl",   icon:"📊", label:"Resultados (sincronización automática)",
+               ph:"https://data.orc.org/...?action=index&eventid=...",
+               hint:"Para actualizar la clasificación durante la regata"},
+              {key:"docsUrl",      icon:"📄", label:"Instrucciones de regata / Documentación",
+               ph:"https://www.racingrulesofsailing.org/documents/...",
+               hint:"NOR, Instrucciones de Regata"},
+            ].map(({key,icon,label,required,ph,hint})=>(
+              <div key={key} style={{marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}>
+                  <span style={{fontSize:11}}>{icon}</span>
+                  <span style={{fontSize:10,fontWeight:700,color:required?T1:T2}}>{label}</span>
+                  {required&&<span style={{fontSize:9,color:RED,fontWeight:700}}>*</span>}
+                  {confirmedLinks[key]&&<a href={confirmedLinks[key]} target="_blank" rel="noopener noreferrer"
+                    style={{marginLeft:"auto",fontSize:10,color:ACC}}>↗ Abrir</a>}
+                </div>
+                <input value={confirmedLinks[key]||""}
+                  onChange={e=>setConfirmedLinks(l=>({...l,[key]:e.target.value}))}
+                  placeholder={ph}
+                  style={{fontSize:10,borderColor:required&&!confirmedLinks[key]?RED:undefined}}/>
+                <div style={{fontSize:9,color:T3,marginTop:2}}>{hint}</div>
+              </div>
+            ))}
+            {err&&<div style={{color:RED,fontSize:11,marginBottom:8,padding:"8px 10px",background:`${RED}15`,borderRadius:7}}>{err}</div>}
+            {loading?(
+              <div style={{textAlign:"center",padding:"16px 0",color:CYN}}>
+                <div style={{fontSize:22,marginBottom:4}}>⛵</div>
+                <div style={{fontSize:12,fontWeight:700}}>Cargando flota...</div>
+                <div style={{fontSize:10,color:T2}}>Buscando barcos en {confirmedLinks.entryListUrl?.slice(0,40)||"..."}...</div>
+              </div>
+            ):(
+              <div>
+                <div style={{display:"flex",gap:7,marginBottom:10}}>
+                  <Btn v="← Atrás" onClick={()=>setStep(3)} c="dim"/>
+                  <Btn v="⛵ Cargar flota →" onClick={loadFromLinks} c="acc" fw lg disabled={!confirmedLinks.entryListUrl&&!pageUrl}/>
+                </div>
+
+                {/* Entrada manual — funciona sin Chrome extension */}
+                <div style={{borderTop:`1px solid ${BDR}`,paddingTop:10}}>
+                  <div style={{fontSize:11,fontWeight:700,color:GLD,marginBottom:4}}>📋 O pega la lista manualmente</div>
+                  <div style={{fontSize:9,color:T2,marginBottom:6,lineHeight:1.5}}>
+                    Copia el texto de la web de competidores (Ctrl+A, Ctrl+C) y pégalo aquí. Funciona con cualquier formato — la IA extrae los barcos automáticamente.
+                  </div>
+                  <ManualFleetPaste onFleetParsed={boats=>{
+                    const colored = boats.map((b,i)=>({...b, color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]}));
+                    setAllBoats(colored);
+                    const cls=[...new Set(colored.map(b=>b.cls).filter(Boolean))];
+                    setFoundClasses(cls);
+                    setFleet(colored);
+                    const ownBoat = colored.find(b=>b.own) || colored.find(b=>b.sailNo?.startsWith("ESP")) || colored[0];
+                    setOwnId(ownBoat?.id||colored[0]?.id||"");
+                    setStep(cls.length>1?"3c":4);
+                  }}/>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
 
         {/* PASO 3C: Seleccionar clase (cuando hay varias) */}
         {step==="3c"&&(
@@ -1862,6 +3105,14 @@ function NewChampWizard({onClose, onCreate}){
         {/* PASO 4: Selecciona TU barco */}
         {step===4&&(
           <>
+            {fleet.length===0 ? (
+              <div style={{textAlign:"center",padding:"24px 16px",color:T2}}>
+                <div style={{fontSize:28,marginBottom:8}}>⚠️</div>
+                <div style={{fontSize:12,fontWeight:700,color:GLD,marginBottom:6}}>Sin barcos cargados</div>
+                <div style={{fontSize:10,marginBottom:12}}>Carga la flota primero desde el paso anterior</div>
+                <Btn v="← Volver a cargar flota" onClick={()=>setStep(3)} c="acc" fw/>
+              </div>
+            ) : (<>
             <div style={{marginBottom:10}}>
               {selectedClass&&selectedClass!=="todas"&&(
                 <div style={{display:"flex",alignItems:"center",gap:7,padding:"6px 10px",background:`${ACC}15`,border:`1px solid ${ACC}33`,borderRadius:7,marginBottom:8}}>
@@ -1905,6 +3156,7 @@ function NewChampWizard({onClose, onCreate}){
               <Btn v="← Atrás" onClick={()=>setStep(foundClasses.length>1?"3c":3)} c="dim"/>
               <Btn v="✓ Crear campeonato" onClick={finish} c="grn" fw lg dis={!ownId}/>
             </div>
+            </>)}
           </>
         )}
       </div>
@@ -1912,31 +3164,46 @@ function NewChampWizard({onClose, onCreate}){
   );
 }
 
-function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew}){
+function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, onSyncOrc}){
   const [confirm2,setConfirm2] = useState(null);
   const [clearing,setClearing] = useState(false);
+  const [syncing, setSyncing]  = useState(false);
+  const [syncMsg, setSyncMsg]  = useState("");
 
   const clearStorage = async()=>{
     setClearing(true);
     try{
-      await window.storage.delete("orc-v7",true);
-      await window.storage.delete("orc-champs-idx",true);
+      localStorage.removeItem("orc-v7");
+      localStorage.removeItem("orc-champs-idx");
+      Object.keys(localStorage).filter(k=>k.startsWith("orc-ch-")).forEach(k=>localStorage.removeItem(k));
       window.location.reload();
     }catch{ setClearing(false); }
+  };
+
+  const syncOrc = async()=>{
+    if(!state.champ?.resultsUrl){ setSyncMsg("⚠️ Añade la URL en ⚙️ Config → Regata → URL resultados"); return; }
+    setSyncing(true); setSyncMsg("Conectando con ORC...");
+    const data = await fetchOrcResults(state.champ.resultsUrl);
+    if(data){
+      onSyncOrc(data);
+      setSyncMsg(`✓ ${data.numRaces||0} pruebas · ${data.overallStandings?.length||0} barcos`);
+    } else {
+      setSyncMsg("No se pudieron obtener resultados. Verifica la URL.");
+    }
+    setSyncing(false);
   };
 
   return(
     <div style={{overflowY:"auto",height:"100%",padding:"16px 14px"}}>
       <ConfirmDialog msg={confirm2?.msg} onOk={()=>{confirm2?.onOk();setConfirm2(null);}} onCancel={()=>setConfirm2(null)}/>
 
-      {/* Hero */}
-      <div style={{textAlign:"center",padding:"16px 0 22px"}}>
-        <div style={{fontSize:48,marginBottom:8}}>⛵</div>
-        <h1 style={{fontSize:24,fontWeight:800,color:"#fff",letterSpacing:-1,marginBottom:4}}>ORC Race Tracker</h1>
-        <p style={{fontSize:11,color:T2}}>Clasificación ORC en tiempo real · Multi-dispositivo</p>
+      <div style={{textAlign:"center",padding:"14px 0 18px"}}>
+        <div style={{fontSize:44,marginBottom:6}}>⛵</div>
+        <h1 style={{fontSize:22,fontWeight:800,color:"#fff",letterSpacing:-1,marginBottom:3}}>ORC Race Tracker</h1>
+        <p style={{fontSize:10,color:T2}}>Clasificación ORC en tiempo real · v8</p>
       </div>
 
-      <Btn v="＋ Nuevo campeonato" onClick={onNew} c="grn" fw lg st={{marginBottom:16}}/>
+      <Btn v="＋ Nuevo campeonato" onClick={onNew} c="grn" fw lg st={{marginBottom:10}}/>
 
       {champsList.length===0 ? (
         <div style={{textAlign:"center",padding:"20px 16px",background:CARD,borderRadius:12,border:`1px solid ${BDR}`}}>
@@ -1983,6 +3250,210 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew})
   );
 }
 
+// ── PESTAÑA REGATAS — gestión de pruebas y recorrido ─────────────────────────
+function TabRegatas({state, setState, race}){
+  const [sub, setSub] = useState("regatas");
+
+  const co = race?.course||DCOURSE;
+  const coastalLegs = co.coastalLegs||[];
+  const updCourse = (k,v) => setState(s=>({...s, races:s.races.map(r=>r.id===s.activeRaceId?{...r,course:{...r.course,[k]:v}}:r)}));
+
+  const Slider = ({label,k,min,max,step,unit=""})=>(
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+        <span style={{fontSize:11,color:T2}}>{label}</span>
+        <span style={{fontSize:12,fontWeight:700,color:T1,fontFamily:"monospace"}}>{co[k]}{unit}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={co[k]||0}
+        onChange={e=>updCourse(k,+e.target.value)}
+        style={{width:"100%",accentColor:ACC}}/>
+    </div>
+  );
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {/* Sub-tabs */}
+      <div style={{display:"flex",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0}}>
+        {[["regatas","🚩 Regatas"],["recorrido","⚓ Recorrido"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setSub(k)}
+            style={{flex:1,padding:"10px 4px",background:"none",fontSize:12,fontWeight:700,
+              color:sub===k?ACC:T2,borderBottom:sub===k?`2px solid ${ACC}`:"2px solid transparent",
+              border:"none",cursor:"pointer"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div style={{flex:1,overflowY:"auto",padding:"10px 12px"}}>
+
+        {/* ── GESTIÓN DE PRUEBAS ── */}
+        {sub==="regatas"&&(<>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:800,color:T1}}>Pruebas</div>
+              <div style={{fontSize:10,color:T2}}>{state.races.length} pruebas · {state.races.filter(r=>r.startTime).length} completadas</div>
+            </div>
+            <button onClick={()=>{
+              const id=`r${state.races.length+1}_${Date.now()}`;
+              setState(s=>({...s,
+                races:[...s.races,{id,name:`Prueba ${s.races.length+1}`,startTime:null,countdownAt:null,finishedAt:null,passages:[],course:{...race.course},discarded:false}],
+                activeRaceId:id
+              }));
+            }} style={{padding:"8px 16px",background:GRN,color:"#fff",borderRadius:8,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>
+              ＋ Nueva prueba
+            </button>
+          </div>
+
+          {/* Prueba activa — controles de lanzamiento */}
+          {race&&(
+            <Card st={{marginBottom:10,border:`2px solid ${ACC}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:10,color:ACC,fontWeight:700,marginBottom:2}}>PRUEBA ACTIVA</div>
+                  <div style={{fontSize:14,fontWeight:800,color:T1}}>{race.name}</div>
+                </div>
+                {race.startTime
+                  ?<div style={{fontSize:10,padding:"4px 8px",borderRadius:5,background:`${GRN}22`,color:GRN,fontWeight:700}}>✅ Completada / En curso</div>
+                  :<div style={{fontSize:10,padding:"4px 8px",borderRadius:5,background:`${GLD}22`,color:GLD,fontWeight:700}}>⏳ Pendiente</div>
+                }
+              </div>
+              {!race.startTime&&(
+                <div>
+                  <div style={{fontSize:10,color:T2,marginBottom:6}}>Cuenta atrás antes de la salida:</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {[1,2,3,4,5].map(m=>(
+                      <button key={m} onClick={()=>{
+                        const t = Date.now()+m*60*1000;
+                        setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,countdownAt:t}:r)}));
+                      }} style={{flex:1,padding:"8px 0",borderRadius:7,background:CARD2,color:T1,fontSize:12,fontWeight:700,border:`1px solid ${BDR}`,cursor:"pointer",minWidth:44}}>
+                        {m}′
+                      </button>
+                    ))}
+                    <button onClick={()=>{
+                      setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,startTime:Date.now(),countdownAt:null}:r)}));
+                    }} style={{flex:2,padding:"8px 0",borderRadius:7,background:GRN,color:"#fff",fontSize:12,fontWeight:800,border:"none",cursor:"pointer"}}>
+                      🚀 SALIDA YA
+                    </button>
+                  </div>
+                </div>
+              )}
+              {race.startTime&&(
+                <button onClick={()=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,startTime:null,countdownAt:null,passages:[]}:r)}))}
+                  style={{width:"100%",padding:"7px 0",borderRadius:7,background:`${RED}22`,color:RED,fontSize:11,fontWeight:700,border:`1px solid ${RED}44`,cursor:"pointer"}}>
+                  ↺ Reiniciar prueba
+                </button>
+              )}
+            </Card>
+          )}
+
+          {/* Lista de todas las pruebas */}
+          {state.races.map((r,idx)=>{
+            const isActive = r.id===state.activeRaceId;
+            const passCount = r.passages?.length||0;
+            return(
+              <div key={r.id} style={{marginBottom:6,borderRadius:9,border:`2px solid ${isActive?ACC:r.discarded?`${RED}44`:BDR}`,background:isActive?`${ACC}0a`:CARD,overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px"}}>
+                  <div style={{width:28,height:28,borderRadius:7,background:isActive?ACC:CARD2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:13,fontWeight:900,color:isActive?"#fff":T2}}>{idx+1}</span>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <input value={r.name} onChange={e=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,name:e.target.value}:x)}))}
+                      style={{background:"transparent",border:"none",color:isActive?ACC:r.discarded?T3:T1,fontSize:12,fontWeight:700,padding:0,width:"100%",textDecoration:r.discarded?"line-through":"none"}}/>
+                    <div style={{fontSize:9,color:T2}}>
+                      {r.discarded?"🗑 Descartada":r.startTime?"✅ Completada":r.countdownAt?"⏰ Cuenta atrás":passCount>0?`${passCount} pasos`:"Pendiente"}
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:4,flexShrink:0}}>
+                    {!isActive&&<button onClick={()=>setState(s=>({...s,activeRaceId:r.id}))}
+                      style={{padding:"4px 8px",borderRadius:5,background:ACC,color:"#fff",fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>Activar</button>}
+                    <button onClick={()=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,discarded:!x.discarded}:x)}))}
+                      style={{padding:"4px 8px",borderRadius:5,background:r.discarded?`${GRN}22`:`${RED}18`,color:r.discarded?GRN:RED,fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>
+                      {r.discarded?"↩":"🗑"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </>)}
+
+
+        {/* ── CONFIGURACIÓN DEL RECORRIDO ── */}
+        {sub==="recorrido"&&(<>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:14,fontWeight:800,color:T1,marginBottom:2}}>Recorrido</div>
+            <div style={{fontSize:10,color:T2}}>Prueba activa: <strong style={{color:ACC}}>{race?.name||"—"}</strong></div>
+          </div>
+
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Tipo de regata"/>
+            <div style={{display:"flex",gap:6,marginBottom:6}}>
+              {[["wl","⬆️ W/L Barlovento-Sotavento"],["coastal","🗺 Costero"]].map(([v,l])=>(
+                <button key={v} onClick={()=>updCourse("raceType",v)}
+                  style={{flex:1,padding:"8px 0",borderRadius:7,fontSize:10,fontWeight:700,
+                    background:co.raceType===v||(!co.raceType&&v==="wl")?ACC:CARD2,
+                    color:co.raceType===v||(!co.raceType&&v==="wl")?"#fff":T2,border:"none",cursor:"pointer"}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          {(co.raceType||"wl")==="wl"&&(<>
+            <Card st={{marginBottom:10}}>
+              <Lbl v="Distancias (nm)"/>
+              <Slider label="Distancia Boya 1 (Barlovento)" k="mark1Dist" min={0.5} max={5} step={0.1} unit=" nm"/>
+              <Slider label="Distancia Offset 1a" k="mark1aDist" min={0} max={0.5} step={0.05} unit=" nm"/>
+              {co.mark1aDist>0&&<Slider label="Distancia Puerta (Gate)" k="gateDist" min={0.1} max={0.6} step={0.05} unit=" nm"/>}
+              <div style={{display:"flex",gap:6,marginTop:4}}>
+                <span style={{fontSize:10,color:T2,flex:1}}>Lado offset 1a</span>
+                {["port","starboard"].map(s=>(
+                  <button key={s} onClick={()=>updCourse("mark1aSide",s)}
+                    style={{padding:"4px 10px",borderRadius:5,fontSize:10,fontWeight:700,
+                      background:co.mark1aSide===s?PRP:CARD2,color:co.mark1aSide===s?"#fff":T2,border:"none",cursor:"pointer"}}>
+                    {s==="port"?"Babor (Port)":"Estribor (Stbd)"}
+                  </button>
+                ))}
+              </div>
+            </Card>
+
+            <Card st={{marginBottom:10}}>
+              <Lbl v="Diagrama del recorrido"/>
+              <CourseDiagram course={co} passages={[]} fleet={[]} started={false} legRank={{}} boatProg={{}}/>
+            </Card>
+          </>)}
+
+          {(co.raceType)==="coastal"&&(<>
+            <Card st={{marginBottom:10}}>
+              <Lbl v="Tramos costeros"/>
+              {coastalLegs.length===0&&<div style={{fontSize:10,color:T3,marginBottom:8}}>Sin tramos. Añade el primer tramo.</div>}
+              {coastalLegs.map((leg,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,padding:"6px 8px",background:CARD2,borderRadius:7}}>
+                  <span style={{fontSize:10,color:T2,width:18}}>{i+1}</span>
+                  <input value={leg.name||""} onChange={e=>updCourse("coastalLegs",coastalLegs.map((l,j)=>j===i?{...l,name:e.target.value}:l))} placeholder="Nombre tramo" style={{flex:1,fontSize:10}}/>
+                  <input type="number" value={leg.distNm||""} onChange={e=>updCourse("coastalLegs",coastalLegs.map((l,j)=>j===i?{...l,distNm:+e.target.value}:l))} placeholder="nm" style={{width:50,fontSize:10}}/>
+                  <button onClick={()=>updCourse("coastalLegs",coastalLegs.filter((_,j)=>j!==i))} style={{padding:"2px 7px",borderRadius:4,background:`${RED}22`,color:RED,fontSize:12,border:"none",cursor:"pointer"}}>✕</button>
+                </div>
+              ))}
+              <button onClick={()=>updCourse("coastalLegs",[...coastalLegs,{name:`Tramo ${coastalLegs.length+1}`,distNm:1.0}])}
+                style={{width:"100%",padding:"7px 0",borderRadius:7,background:CARD2,color:ACC,fontSize:11,fontWeight:700,border:`1px dashed ${ACC}`,cursor:"pointer"}}>
+                ＋ Añadir tramo
+              </button>
+              {coastalLegs.length>0&&<div style={{fontSize:9,color:T2,marginTop:6}}>Total: {coastalLegs.reduce((a,l)=>a+(l.distNm||0),0).toFixed(2)} nm · {coastalLegs.length} tramos</div>}
+            </Card>
+          </>)}
+
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Viento estimado"/>
+            <Slider label="Viento" k="windKnots" min={2} max={35} step={1} unit=" kts"/>
+          </Card>
+        </>)}
+
+      </div>
+    </div>
+  );
+}
+
 export default function App(){
   const [state,      setState]      = useState(INIT);
   const [tab,        setTab]        = useState(0); // Empieza en Inicio
@@ -1998,6 +3469,13 @@ export default function App(){
   const lastSaveTs = useRef(0);
   const champsRef  = useRef([]);
   useEffect(()=>{ champsRef.current=champsList; },[champsList]);
+
+  // Device ID único por dispositivo — evita que el polling sobreescriba el estado local
+  const DEVICE_ID = useMemo(()=>{
+    let id = localStorage.getItem('orc-device-id');
+    if(!id){ id = Math.random().toString(36).slice(2,10); localStorage.setItem('orc-device-id',id); }
+    return id;
+  },[]);
 
   const ROLES = [
     {id:"patron",     icon:"👨‍✈️", label:"Patrón",          desc:"Control total",                    col:GLD},
@@ -2080,13 +3558,35 @@ export default function App(){
     init();
   },[]);
 
+  // Auto-sincronizar resultados ORC al abrir la app (máx 1 vez cada 10 min)
+  useEffect(()=>{
+    if(!ready) return;
+    const resultsUrl = state.champ?.resultsUrl;
+    if(!resultsUrl) return;
+    const lastSync = state.champ?.orcLastSync||0;
+    const tenMin = 10*60*1000;
+    if(Date.now()-lastSync < tenMin) return; // No re-fetch si hace menos de 10 min
+    fetchOrcResults(resultsUrl).then(data=>{
+      if(data?.overallStandings?.length){
+        wrappedSetState(s=>({...s, champ:{...s.champ,
+          orcStandings: data.overallStandings,
+          orcRaces: data.races||[],
+          orcNumRaces: data.numRaces||0,
+          name: data.eventName||s.champ.name,
+          orcLastSync: Date.now()
+        }}));
+      }
+    });
+  // eslint-disable-next-line
+  },[ready]);
+
   const wrappedSetState = useCallback(fn=>{
     setState(prev=>{
       const next = typeof fn==="function"?fn(prev):fn;
       if(saveRef.current && currentId){
         lastSaveTs.current = Date.now();
         setSync(true);
-        const stateToSave = {...next, _champId:currentId};
+        const stateToSave = {...next, _champId:currentId, _deviceId:DEVICE_ID};
         // Guardar el campeonato activo
         saveCh(currentId, stateToSave);
         // Guardar en la clave activa (para sincronización)
@@ -2102,15 +3602,18 @@ export default function App(){
     });
   },[currentId]);
 
-  // Polling (con cooldown anti-race-condition)
+  // Polling — solo aplica estado de OTRO dispositivo para evitar auto-revert
   useEffect(()=>{
     if(!ready)return;
     const id=setInterval(()=>{
       if(Date.now()-lastSaveTs.current < 2500)return;
-      loadS().then(s=>{ if(s)setState(s); });
+      loadS().then(s=>{
+        // Solo actualizar si el estado viene de un dispositivo diferente al nuestro
+        if(s && s._deviceId && s._deviceId !== DEVICE_ID) setState(s);
+      });
     },3000);
     return()=>clearInterval(id);
-  },[ready]);
+  },[ready, DEVICE_ID]);
 
   // Seleccionar un campeonato diferente
   const selectChamp = useCallback(async(champId)=>{
@@ -2128,11 +3631,11 @@ export default function App(){
   },[currentId, state]);
 
   // Crear nuevo campeonato desde el wizard
-  const createChamp = useCallback(async({name, fleet, ownId})=>{
+  const createChamp = useCallback(async({name, fleet, ownId, mainUrl="", resultsUrl="", docsUrl="", photosUrl="", entryListUrl=""})=>{
     const id = `champ_${Date.now()}`;
     const newState = {
       ...INIT, _champId:id,
-      champ:{name, ownId},
+      champ:{name, ownId, mainUrl, resultsUrl, docsUrl, photosUrl, entryListUrl},
       fleet: fleet.map(b=>({...b})),
       races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],
       activeRaceId:"r1"
@@ -2172,7 +3675,7 @@ export default function App(){
   );
 
   const activeRace=state.races?.find(r=>r.id===state.activeRaceId);
-  const TABS=[{icon:"🏠",label:"Inicio"},{icon:"⚙️",label:"Config"},{icon:"🚩",label:"En Vivo"},{icon:"📋",label:"Tablas"},{icon:"📊",label:"Result."}];
+  const TABS=[{icon:"🏠",label:"Inicio"},{icon:"⚙️",label:"Config"},{icon:"🚩",label:"En Vivo"},{icon:"📋",label:"Tablas"},{icon:"📊",label:"Result."},{icon:"🏁",label:"Regatas"}];
 
   return(
     <ErrorBoundary>
@@ -2226,11 +3729,37 @@ export default function App(){
           </button>
         </div>
         <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-          {tab===0&&<TabHome champsList={champsList} currentChampId={currentId} state={state} onSelect={selectChamp} onDelete={handleDelete} onNew={()=>setShowWizard(true)}/>}
+          {tab===0&&<TabHome champsList={champsList} currentChampId={currentId} state={state} onSelect={selectChamp} onDelete={handleDelete} onNew={()=>setShowWizard(true)} onSyncOrc={orcData=>{
+            // Aplicar resultados oficiales de ORC al estado
+            if(!orcData) return;
+            wrappedSetState(s=>{
+              // Crear/actualizar pruebas con los resultados de ORC
+              const existingRaces = s.races||[];
+              const newRaces = (orcData.races||[]).map((r,i)=>{
+                const existing = existingRaces[i] || {id:`r${i+1}`,passages:[],course:existingRaces[0]?.course||DCOURSE};
+                return {
+                  ...existing,
+                  id: r.id||`r${i+1}`,
+                  name: r.name||`Prueba ${i+1}`,
+                  orcResults: r.results||[],
+                  discarded: r.mandatoryCount===false&&i>0 ? false : existing.discarded||false,
+                };
+              });
+              // Combinar pruebas locales con las de ORC
+              const merged = newRaces.length>existingRaces.length ? newRaces : existingRaces.map((er,i)=>newRaces[i]?{...er,...newRaces[i],passages:er.passages}:er);
+              return {
+                ...s,
+                races: merged,
+                activeRaceId: s.activeRaceId||merged[0]?.id||"r1",
+                champ: {...s.champ, name:orcData.eventName||s.champ.name, orcStandings:orcData.overallStandings||[]}
+              };
+            });
+          }}/> }
           {tab===1&&<TabConfig state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
           {tab===2&&<TabEnVivo state={state} setState={wrappedSetState} role={role}/>}
           {tab===3&&<TabTablas state={state} race={activeRace}/>}
           {tab===4&&<TabResultados state={state} setState={wrappedSetState}/>}
+          {tab===5&&<TabRegatas state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
         </div>
         <div style={{display:"flex",background:CARD,borderTop:`1px solid ${BDR}`,flexShrink:0}}>
           {TABS.map(({icon,label},i)=>(
