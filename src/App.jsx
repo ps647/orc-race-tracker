@@ -190,8 +190,34 @@ async function uploadPhotoToServer(base64, sailNo, type){
   }catch{ return null; }
 }
 
-// Cache de URLs de fotos del servidor
-const _srvPhotoCache = {};
+// Analizar colores del barco desde una foto usando Claude Vision
+async function analyzeBoatColors(base64Image, mediaType="image/jpeg"){
+  try{
+    const res = await fetch(CLAUDE_API,{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        model: IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001",
+        max_tokens: 300,
+        messages:[{role:"user", content:[
+          {type:"image", source:{type:"base64", media_type:mediaType, data:base64Image.replace(/^data:image\/\w+;base64,/,"")}},
+          {type:"text", text:`Analiza esta foto de un velero de regata y extrae los colores exactos.
+Responde ÚNICAMENTE con JSON sin markdown:
+{"hullColor":"#hexcolor","sailColor":"#hexcolor","trimBands":["#hex1","#hex2"],"confidence":"high/medium/low"}
+
+- hullColor: color principal del casco (hex)
+- sailColor: color principal de la vela mayor (hex)  
+- trimBands: colores de las bandas/rayas de trimming en las velas (array de hex, puede estar vacío)
+- Si el casco es negro usa #111111, si es blanco usa #f8fafc`}
+        ]}]
+      })
+    });
+    const data = await res.json();
+    const raw = (data.content||[]).map(c=>c.text||"").join("");
+    const m = raw.match(/\{[\s\S]*\}/);
+    if(m) return JSON.parse(m[0]);
+  }catch(e){ console.warn("analyzeBoatColors error:",e); }
+  return null;
+}
 async function loadServerPhotos(){
   if(IS_ARTIFACT||_srvPhotoCache._loaded) return _srvPhotoCache;
   try{
@@ -389,68 +415,10 @@ IMPORTANT: Return ONLY a direct image file URL (ending .jpg/.jpeg/.png/.webp). N
 }
 
 // Analizar imagen en base64 (foto desde cámara del móvil)
-async function analyzeBoatColorsFromBase64(base64Data, mediaType, boatName){
-  try{
-    const res = await fetch(CLAUDE_API,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:700,
-        messages:[{
-          role:"user",
-          content:[
-            {type:"image", source:{type:"base64", media_type:mediaType||"image/jpeg", data:base64Data}},
-            {type:"text", text:`This is a photo of the racing yacht "${boatName}". Analyze all visible colors and return ONLY this JSON (no markdown):
-{"hullColor":"#hex","mainColor":"#hex","jibColor":"#hex","spiColor":"#hex","trimBandsMain":["#hex","#hex"],"trimBandsJib":["#hex"],"trimBandsSpi":["#hex","#hex"]}
-- hullColor: main hull color
-- mainColor: mainsail base color
-- jibColor: headsail/genoa color
-- spiColor: spinnaker color (if visible)
-- trimBandsMain: 2-4 colors of horizontal stripes on MAINSAIL
-- trimBandsJib: 1-3 colors of horizontal stripes on JIB/GENOA (if visible)
-- trimBandsSpi: 1-3 colors of horizontal stripes on SPINNAKER (if visible)
-If a sail is not visible, use [] for its bands.`}
-          ]
-        }]
-      })
-    });
-    const data = await res.json();
-    const text = (data.content||[]).map(i=>i.text||"").join("");
-    const m = text.match(/\{[\s\S]*?\}/);
-    return m ? JSON.parse(m[0]) : null;
-  }catch(e){return null;}
-}
+
 
 // Analizar foto del barco para extraer colores y bandas de trimming automáticamente
-async function analyzeBoatColors(photoUrl, boatName){
-  try{
-    const res = await fetch(CLAUDE_API,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:600,
-        messages:[{
-          role:"user",
-          content:[
-            {type:"image", source:{type:"url", url:photoUrl}},
-            {type:"text", text:`This is the racing yacht "${boatName}". Analyze colors and return ONLY this JSON (no markdown):
-{"hullColor":"#hex","mainColor":"#hex","jibColor":"#hex","spiColor":"#hex","trimBands":["#hex","#hex"],"trimBandsMain":["#hex","#hex"],"trimBandsJib":["#hex"],"trimBandsSpi":["#hex","#hex"]}
-- hullColor/mainColor/jibColor/spiColor: base colors
-- trimBandsMain: 2-4 hex colors of horizontal stripes on MAINSAIL (trimming bands)
-- trimBandsJib: 1-3 hex colors of horizontal stripes on JIB/GENOA
-- trimBandsSpi: 1-3 hex colors of horizontal stripes on SPINNAKER
-- trimBands: same as trimBandsMain (for compatibility)
-Use [] if a sail type bands are not visible.`}
-          ]
-        }]
-      })
-    });
-    const data = await res.json();
-    const text = (data.content||[]).map(i=>i.text||"").join("");
-    const m = text.match(/\{[\s\S]*?\}/);
-    return m ? JSON.parse(m[0]) : null;
-  }catch(e){return null;}
-}
+
 
 
 // Posiciones SVG del recorrido — viewBox 380×310 (1:1 con píxeles en móvil)
@@ -613,6 +581,98 @@ const isDark = c => {
   return (r*299+g*587+b*114)/1000 < 128;
 };
 
+// ── SUBIR CERTIFICADO ORC — extrae GPH/ToT del PDF oficial ──────────────────
+function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
+  const [busy, setBusy]   = useState(false);
+  const [msg,  setMsg]    = useState("");
+  const [ok,   setOk]     = useState(false);
+  const fileRef = useRef(null);
+
+  const handleFile = async e=>{
+    const file = e.target.files?.[0];
+    if(!file) return;
+    if(file.type!=="application/pdf"){ setMsg("❌ Selecciona un PDF (certificado ORC)"); return; }
+
+    setBusy(true); setOk(false);
+    setMsg("⏳ Leyendo certificado ORC...");
+
+    try{
+      // Convertir PDF a base64
+      const b64 = await new Promise((res,rej)=>{
+        const r=new FileReader();
+        r.onload=e=>res(e.target.result.split(",")[1]);
+        r.onerror=rej;
+        r.readAsDataURL(file);
+      });
+
+      const res = await fetch(CLAUDE_API,{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model: IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001",
+          max_tokens: 400,
+          messages:[{role:"user", content:[
+            {type:"document", source:{type:"base64", media_type:"application/pdf", data:b64}},
+            {type:"text", text:`Este es un certificado ORC de rating de vela. Extrae estos valores exactos del certificado.
+Busca específicamente:
+- "APH ToD" o "All purpose" en la columna "Time On Distance" → este es el GPH
+- "APH ToT" o "All purpose" en la columna "Time On Time" → este es el ToT
+- Nombre del barco
+- Número de vela (sail number)
+- Tipo de barco (Class)
+
+Responde SOLO con JSON (sin markdown):
+{"gpH":381.5,"gpT":1.5729,"boatName":"HISPANIA","sailNo":"ESP-10000","boatType":"TP 52","certNo":"1000002","validUntil":"2026-12-31"}`}
+          ]}]
+        })
+      });
+
+      const data = await res.json();
+      if(data.error){
+        const m=data.error.message||"";
+        if(m.includes("rate limit")) setMsg("⏱ Rate limit — espera 1 minuto e inténtalo de nuevo");
+        else setMsg("❌ "+m.slice(0,100));
+        setBusy(false); return;
+      }
+
+      const raw = (data.content||[]).map(c=>c.text||"").join("");
+      const match = raw.match(/\{[\s\S]*\}/);
+      if(!match){ setMsg("❌ No se pudo leer el certificado"); setBusy(false); return; }
+
+      const rating = JSON.parse(match[0]);
+      if(!rating.gpH){ setMsg("❌ No se encontró el GPH en el certificado"); setBusy(false); return; }
+
+      onRatingExtracted(rating);
+      setOk(true);
+      setMsg(`✅ GPH ${rating.gpH} · ToT ${rating.gpT||"—"} · ${rating.boatType||""} · válido hasta ${rating.validUntil||"—"}`);
+    }catch(e){
+      setMsg("❌ Error: "+e.message);
+    }
+    setBusy(false);
+    e.target.value="";
+  };
+
+  return(
+    <div>
+      <input ref={fileRef} type="file" accept="application/pdf" style={{display:"none"}} onChange={handleFile}/>
+      <button onClick={()=>fileRef.current?.click()} disabled={busy}
+        style={{width:"100%",padding:"9px 0",borderRadius:7,
+          background:ok?`${GRN}22`:busy?CARD2:CYN,
+          color:ok?GRN:busy?T3:"#fff",
+          border:`1px solid ${ok?GRN:busy?BDR:CYN}`,
+          fontSize:11,fontWeight:700,cursor:busy?"default":"pointer"}}>
+        {busy?"⏳ Leyendo certificado...":ok?"✅ Certificado aplicado":"📄 Subir certificado ORC (PDF)"}
+      </button>
+      {msg&&(
+        <div style={{marginTop:5,fontSize:9,padding:"5px 8px",borderRadius:6,lineHeight:1.5,
+          background:ok?`${GRN}15`:msg.startsWith("❌")||msg.startsWith("⏱")?`${RED}15`:`${CYN}15`,
+          color:ok?GRN:msg.startsWith("❌")||msg.startsWith("⏱")?RED:CYN}}>
+          {msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
   const [open,      setOpen]     = useState(false);
   const [loading,   setLoading]  = useState(null);
@@ -660,7 +720,7 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
       onUpdate("photoUrl", dataUrl); // guardar como data URL
       setImgErr(false);
       setMsg("Analizando colores con IA...");
-      const colors = await analyzeBoatColorsFromBase64(base64, mediaType, b.name);
+      const colors = await analyzeBoatColors(base64, mediaType);
       if(colors){
         if(colors.hullColor) { onUpdate("hullColor",colors.hullColor); onUpdate("color",colors.hullColor); }
         if(colors.mainColor) onUpdate("mainColor",colors.mainColor);
@@ -687,7 +747,7 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
     if(b.photoUrl.startsWith("data:")){
       const [meta,base64]=b.photoUrl.split(",");
       const mediaType=meta.match(/:(.*?);/)?.[1]||"image/jpeg";
-      colors = await analyzeBoatColorsFromBase64(base64, mediaType, b.name);
+      colors = await analyzeBoatColors(base64, mediaType);
     } else {
       colors = await analyzeBoatColors(b.photoUrl, b.name);
     }
@@ -769,7 +829,16 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
               </div>
             ))}
             {bandsMain.slice(0,3).map((c,i)=><div key={i} style={{width:18,height:6,borderRadius:3,background:c,border:`1px solid #ffffff22`,marginTop:6}}/>)}
-            {b.gpH&&<span style={{fontSize:9,color:CYN,marginLeft:4,fontFamily:"monospace"}}>{b.gpH}</span>}
+            {/* GPH editable inline — doble tap para editar */}
+            <div onClick={e=>{e.stopPropagation();}} style={{marginLeft:4}}>
+              <input
+                type="number" step="0.1" value={b.gpH||""} 
+                onChange={e=>onUpdate("gpH",parseFloat(e.target.value)||0)}
+                onClick={e=>e.stopPropagation()}
+                style={{width:52,background:"transparent",border:"none",borderBottom:`1px solid ${CYN}44`,color:CYN,fontSize:10,fontFamily:"monospace",fontWeight:700,padding:"0 2px",textAlign:"center"}}
+                title="GPH — pulsa para editar"/>
+              <span style={{fontSize:8,color:T3,marginLeft:1}}>GPH</span>
+            </div>
           </div>
         </div>
         <span style={{color:T2,fontSize:14,flexShrink:0}}>{open?"▲":"▼"}</span>
@@ -779,7 +848,46 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
       {open&&(
         <div style={{padding:"0 12px 14px",borderTop:`1px solid ${BDR}`}}>
 
-          {/* Fotos del barco: ceñida y popa */}
+          {/* Rating ORC */}
+          <div style={{marginTop:10,padding:"8px 10px",background:CARD2,borderRadius:8,border:`1px solid ${CYN}33`}}>
+            <div style={{fontSize:10,fontWeight:700,color:CYN,marginBottom:6}}>📋 Rating ORC</div>
+
+            {/* Upload certificado ORC — extrae GPH automáticamente */}
+            <OrcCertUploader boatName={b.name} sailNo={b.sailNo}
+              onRatingExtracted={rating=>{
+                if(rating.gpH)   onUpdate("gpH",   rating.gpH);
+                if(rating.gpT)   onUpdate("gpT",   rating.gpT);
+                if(rating.cdl)   onUpdate("cdl",   rating.cdl);
+                if(rating.boatType) onUpdate("boatType", rating.boatType);
+              }}/>
+
+            {/* Edición manual como fallback */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:8}}>
+              <div>
+                <div style={{fontSize:9,color:T2,marginBottom:2}}>GPH (ToD All purpose)</div>
+                <input type="number" step="0.1" value={b.gpH||""}
+                  onChange={e=>onUpdate("gpH",parseFloat(e.target.value)||0)}
+                  style={{width:"100%",fontFamily:"monospace",fontWeight:700,fontSize:14,color:CYN,background:CARD,border:`1px solid ${CYN}44`,borderRadius:6,padding:"5px 8px"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:9,color:T2,marginBottom:2}}>ToT (All purpose)</div>
+                <input type="number" step="0.0001" value={b.gpT||""}
+                  onChange={e=>onUpdate("gpT",parseFloat(e.target.value)||0)}
+                  placeholder="ej. 1.5729"
+                  style={{width:"100%",fontFamily:"monospace",fontSize:12,color:T2,background:CARD,border:`1px solid ${BDR}`,borderRadius:6,padding:"5px 8px"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:9,color:T2,marginBottom:2}}>Nº vela</div>
+                <input type="text" value={b.sailNo||""} onChange={e=>onUpdate("sailNo",e.target.value)}
+                  style={{width:"100%",fontSize:11,background:CARD,border:`1px solid ${BDR}`,borderRadius:6,padding:"5px 8px"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:9,color:T2,marginBottom:2}}>Nº proa</div>
+                <input type="number" value={b.bowNum||""} onChange={e=>onUpdate("bowNum",parseInt(e.target.value)||0)}
+                  style={{width:"100%",fontSize:11,background:CARD,border:`1px solid ${BDR}`,borderRadius:6,padding:"5px 8px"}}/>
+              </div>
+            </div>
+          </div>
           <div style={{marginTop:10,marginBottom:10}}>
             <Lbl v="Fotos del barco (ceñida y popa)"/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
@@ -1022,11 +1130,12 @@ const compressImg = (file, maxPx=900) => new Promise(res=>{
   r.readAsDataURL(file);
 });
 
-function BoatPhotoDbTab({fleet, regattaName}){
+function BoatPhotoDbTab({fleet, regattaName, onColorUpdate}){
   const [db,      setDb]     = useState({});
   const [saving,  setSaving] = useState(null);
   const [search,  setSearch] = useState("");
   const [editId,  setEditId] = useState(null);
+  const [analyzingColors, setAnalyzingColors] = useState(null); // sailNo being analyzed
   const [beatUrl, setBeatUrl]= useState("");
   const [runUrl,  setRunUrl] = useState("");
   const [msg,     setMsg]    = useState("");
@@ -1083,8 +1192,24 @@ function BoatPhotoDbTab({fleet, regattaName}){
     setSaving(null); setEditId(null); setBeatUrl(""); setRunUrl("");
     setMsg(serverBeatUrl||serverRunUrl
       ?"✅ Foto guardada en servidor — visible en todos los dispositivos"
-      :"✓ Foto guardada localmente"); 
+      :"✓ Foto guardada localmente");
     setTimeout(()=>setMsg(""),4000);
+
+    // Analizar colores automáticamente desde la foto de ceñida
+    const photoForAnalysis = beat?.startsWith("data:") ? beat : serverBeatUrl;
+    if(photoForAnalysis && onColorUpdate){
+      setAnalyzingColors(key);
+      setMsg("🎨 Analizando colores del barco...");
+      const colors = await analyzeBoatColors(photoForAnalysis);
+      if(colors){
+        onColorUpdate(boatId, colors);
+        setMsg(`✅ Colores actualizados — casco ${colors.hullColor}, vela ${colors.sailColor}${colors.trimBands?.length?" + "+colors.trimBands.length+" bandas":""}`);
+      } else {
+        setMsg("✓ Foto guardada (análisis de colores no disponible)");
+      }
+      setAnalyzingColors(null);
+      setTimeout(()=>setMsg(""),5000);
+    }
   };
 
   const handleFile = async(file, type)=>{
@@ -1200,10 +1325,26 @@ function BoatPhotoDbTab({fleet, regattaName}){
                       style={{fontSize:9,color:urlVal?.startsWith("data:")?GRN:T1}}/>
                   </div>
                 ))}
-                <button onClick={()=>save(b.id,beatUrl||null,runUrl||null)} disabled={saving===b.id}
-                  style={{width:"100%",padding:"9px 0",background:saving===b.id?CARD2:GRN,color:"#fff",borderRadius:7,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>
-                  {saving===b.id?"⏳ Guardando...":"💾 Guardar fotos"}
+                <button onClick={()=>save(b.id,beatUrl||null,runUrl||null)} disabled={saving===b.id||analyzingColors===key}
+                  style={{width:"100%",padding:"9px 0",borderRadius:7,background:saving===b.id||analyzingColors===key?CARD2:GRN,color:"#fff",borderRadius:7,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>
+                  {saving===b.id?"⏳ Guardando...":analyzingColors===key?"🎨 Analizando colores...":"💾 Guardar fotos"}
                 </button>
+                {/* Botón analizar colores de foto ya guardada */}
+                {(getPhoto(key,"beat")||beatPhoto)&&onColorUpdate&&(
+                  <button onClick={async()=>{
+                    const src = getPhoto(key,"beat")||beatPhoto;
+                    setAnalyzingColors(key);
+                    setMsg("🎨 Analizando colores...");
+                    const c = await analyzeBoatColors(src);
+                    if(c){ onColorUpdate(b.id,c); setMsg(`✅ Casco ${c.hullColor} · Vela ${c.sailColor}${c.trimBands?.length?" · "+c.trimBands.length+" bandas":""}`); }
+                    else setMsg("No se pudieron detectar colores");
+                    setAnalyzingColors(null);
+                    setTimeout(()=>setMsg(""),5000);
+                  }} disabled={analyzingColors===key}
+                    style={{width:"100%",padding:"7px 0",borderRadius:7,background:CARD2,color:GLD,fontSize:11,fontWeight:700,border:`1px solid ${GLD}44`,cursor:"pointer",marginTop:5}}>
+                    {analyzingColors===key?"⏳ Analizando...":"🎨 Detectar colores automáticamente"}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1459,7 +1600,18 @@ function TabConfig({state,setState,race}){
 
         {/* ── PESTAÑA FOTOS BD ──────────────────────────────── */}
         {cfgTab==="fotos"&&(
-          <BoatPhotoDbTab fleet={state.fleet} regattaName={state.champ?.name||""}/>
+          <BoatPhotoDbTab fleet={state.fleet} regattaName={state.champ?.name||""}
+            onColorUpdate={(boatId, colors)=>{
+              setState(s=>({...s, fleet:s.fleet.map(b=>b.id===boatId?{
+                ...b,
+                hullColor: colors.hullColor||b.hullColor,
+                color:     colors.trimBands?.[0]||b.color,
+                mainColor: colors.sailColor||b.mainColor,
+                jibColor:  colors.sailColor||b.jibColor,
+                spiColor:  colors.trimBands?.[0]||b.spiColor,
+                trimBandsMain: colors.trimBands?.length ? colors.trimBands : b.trimBandsMain,
+              }:b)}));
+            }}/>
         )}
         {cfgTab==="campeonato"&&(<>
           <Card st={{marginBottom:10}}>
@@ -2652,7 +2804,7 @@ function ManualFleetPaste({onFleetParsed}){
       const res = await fetch(CLAUDE_API,{
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:2000,
+          model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:1200,
           messages:[{role:"user", content:[
             contentBlock,
             {type:"text", text:`Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
@@ -2696,7 +2848,11 @@ ${text.slice(0,5000)}`}]
   };
 
   const processApiResponse = async data =>{
-    if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
+    if(data.error) {
+      const errMsg = data.error.message||JSON.stringify(data.error);
+      if(errMsg.includes("rate limit")) throw new Error("⏱ Rate limit — espera 1 minuto y vuelve a intentarlo. El PDF es muy grande, prueba a subir solo la primera página.");
+      throw new Error(errMsg);
+    }
     const raw = (data.content||[]).map(c=>c.text||"").join("").trim();
     if(!raw) throw new Error("La IA no devolvió respuesta. Verifica que la API key es válida.");
 
@@ -2871,10 +3027,12 @@ async function fetchOrcResults(url){
 }
 // ── TROFEO CONDE DE GODÓ 2026 — 53ª edición · datos del PDF oficial ─────────
 const GODO_2026_ALL = [
-  {sailNo:"ESP10000",name:"HISPANIA",               cls:"ORC 0", boatType:"",           nation:"ESP",gpH:580},
+  {sailNo:"ESP10000",name:"HISPANIA",               cls:"ORC 0", boatType:"TP 52",       nation:"ESP",gpH:381.5, bowNum:6},
   {sailNo:"ESP15025",name:"TENAZ",                  cls:"ORC 0", boatType:"Swan 50",    nation:"ESP",gpH:580},
-  {sailNo:"ESP52801",name:"URBANIA",                cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:561,own:true},
-  {sailNo:"ESP7552", name:"APROPERTIES BLUE CARBON",cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:561},
+  {sailNo:"ESP52801",name:"URBANIA",                cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:561,own:true,
+    hullColor:"#111111",color:"#22c55e",trimBandsMain:["#22c55e","#22c55e","#22c55e"],mainColor:"#111111",jibColor:"#111111",spiColor:"#22c55e"},
+  {sailNo:"ESP7552", name:"APROPERTIES BLUE CARBON",cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:561,
+    hullColor:"#f8fafc",color:"#f97316",trimBandsMain:["#f97316","#f97316"],mainColor:"#111111",jibColor:"#111111",spiColor:"#f97316"},
   {sailNo:"ESP888",  name:"ENIGMA",                 cls:"ORC 0", boatType:"",           nation:"ESP",gpH:580},
   {sailNo:"ESP11047",name:"VIKINGO ENERTIVA",       cls:"ORC 1", boatType:"",           nation:"ESP",gpH:600},
   {sailNo:"ESP19981",name:"HYDRA HM HOSPITALES",    cls:"ORC 1", boatType:"",           nation:"ESP",gpH:600},
@@ -2941,7 +3099,7 @@ async function fetchFleetFromUrl(url) {
         const apiRes = await fetch(CLAUDE_API,{
           method:"POST", headers:{"Content-Type":"application/json"},
           body:JSON.stringify({
-            model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:2000,
+            model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:1200,
             messages:[{role:"user",content:[
               {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
               {type:"text",text:`Extrae todos los barcos. Para cada uno: name, sailNo, bowNum, gpH, boatType, nation, cls.
