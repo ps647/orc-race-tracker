@@ -218,6 +218,9 @@ Responde ÚNICAMENTE con JSON sin markdown:
   }catch(e){ console.warn("analyzeBoatColors error:",e); }
   return null;
 }
+// Cache de URLs de fotos del servidor Vercel Blob
+const _srvPhotoCache = {};
+
 async function loadServerPhotos(){
   if(IS_ARTIFACT||_srvPhotoCache._loaded) return _srvPhotoCache;
   try{
