@@ -273,7 +273,7 @@ function parseVoiceInput(text, fleet) {
 }
 const WINDS=[6,8,10,12,14,16,20];
 const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
-const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:""},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
+const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:"",scoringMode:"AP_ToD"},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
 const LEG_DEF=[
   {n:1,mark:"Boya 1",   type:"beat", label:"Ceñida 1",    col:"#d97706"},
   {n:2,mark:"Offset 1a",type:"reach",label:"Través 1",    col:"#7c3aed"},
@@ -296,10 +296,86 @@ const ACC="#2563eb",GRN="#059669",RED="#dc2626",GLD="#d97706",CYN="#0891b2",PRP=
 const CSS=`*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}body,#root{background:${BG};color:${T1};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;height:100vh;overflow:hidden}input,select{width:100%;color:${T1};background:${CARD2};border:1px solid ${BDR};border-radius:8px;padding:8px 10px;font-size:13px;outline:none}input:focus,select:focus{border-color:${ACC}}button{cursor:pointer;border:none;outline:none}button:active{transform:scale(.95)}::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:${BDR}}@keyframes pop{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}.pop{animation:pop .18s ease}`;
 
 function ft(s,plus=false){if(s==null||isNaN(s))return"--:--";const g=s<0?"-":(plus&&s>0?"+":"");const a=Math.abs(Math.round(s));const h=Math.floor(a/3600),m=Math.floor((a%3600)/60),sc=a%60;return h>0?`${g}${h}:${String(m).padStart(2,"0")}:${String(sc).padStart(2,"0")}`:`${g}${String(m).padStart(2,"0")}:${String(sc).padStart(2,"0")}`;}
-function vpp(gpH,tws){const bi=[1.27,1.14,1.07,1.03,1.01,1.00,.99],ri=[1.30,1.19,1.10,1.05,1.02,1.00,.99],i=WINDS.indexOf(tws);if(i<0)return{beat:gpH,reach:+(gpH*.97).toFixed(1),run:gpH};return{beat:+(gpH*bi[i]).toFixed(1),reach:+(gpH*(.97+(bi[i]-.97)*.3)).toFixed(1),run:+(gpH*ri[i]).toFixed(1)};}
+
+// ── MODELO DE RATING ORC ────────────────────────────────────────────────────
+// Cada barco guarda su certificado completo, no un escalar. Las claves "single"
+// son los Single Number Scoring Options del certificado; "curves" son las tablas
+// Time Allowances (secs/NM) por velocidad de viento.
+const SCORING_MODES = [
+  {key:"WL_ToT",   label:"W/L · ToT",      kind:"ToT", curve:"wl",      single:"wl_tot"},
+  {key:"WL_ToD",   label:"W/L · ToD",      kind:"ToD", curve:"wl",      single:"wl_tod"},
+  {key:"AP_ToD",   label:"All Purpose ToD",kind:"ToD", curve:"ap",      single:"ap_tod"},
+  {key:"AP_ToT",   label:"All Purpose ToT",kind:"ToT", curve:"ap",      single:"ap_tot"},
+  {key:"CLD_ToD",  label:"Coastal/LD ToD", kind:"ToD", curve:"coastal", single:"cld_tod"},
+];
+const DEFAULT_SCORING = "WL_ToT";
+const scoringMode = k => SCORING_MODES.find(m=>m.key===k) || SCORING_MODES[0];
+
+// ¿El barco tiene un rating utilizable para este modo de scoring?
+function hasValidRating(b, modeKey=DEFAULT_SCORING){
+  const m = scoringMode(modeKey), r = b?.rating;
+  if(!r) return false;
+  if(r.single && r.single[m.single]!=null) return true;          // single number disponible
+  if(r.curves && Array.isArray(r.curves[m.curve]) && r.curves[m.curve].length) return true; // curva disponible
+  // compatibilidad hacia atrás: barco viejo con gpH escalar (= All Purpose ToD)
+  if(m.single==="ap_tod" && b.gpH) return true;
+  return false;
+}
+
+// Devuelve el ToD efectivo (segundos/milla) para un viento dado, usando la curva
+// real del certificado si existe; si no, cae al single number; si no, al gpH legacy.
+function ratingToD(b, tws, modeKey=DEFAULT_SCORING){
+  const m = scoringMode(modeKey), r = b?.rating;
+  if(r?.curves?.[m.curve]?.length){
+    const row = r.curves[m.curve], i = WINDS.indexOf(tws);
+    if(i>=0 && row[i]!=null) return row[i];
+  }
+  if(r?.single?.[m.single]!=null && m.kind==="ToD") return r.single[m.single];
+  if(b.gpH) return b.gpH; // legacy
+  return null;
+}
+
+// Tiempos corregidos por tramo, derivados de la curva real cuando está disponible.
+// beat = ceñida (VMG barlovento), run = popa (VMG run), reach a ~90°.
+function vpp(b, tws, modeKey=DEFAULT_SCORING){
+  // Si el barco trae las curvas detalladas del certificado, las usamos directamente.
+  const r = (typeof b==="object") ? b?.rating : null;
+  const i = WINDS.indexOf(tws);
+  if(r?.ta && i>=0 && r.ta.beat?.[i]!=null){
+    return {beat:r.ta.beat[i], reach:r.ta.r90?.[i] ?? r.ta.beat[i], run:r.ta.run?.[i] ?? r.ta.beat[i]};
+  }
+  // Fallback legacy: derivar de un escalar (acepta número o barco con gpH).
+  const gpH = (typeof b==="number") ? b : ratingToD(b, tws, modeKey);
+  if(gpH==null) return {beat:null,reach:null,run:null};
+  const bi=[1.27,1.14,1.07,1.03,1.01,1.00,.99],ri=[1.30,1.19,1.10,1.05,1.02,1.00,.99];
+  if(i<0)return{beat:gpH,reach:+(gpH*.97).toFixed(1),run:gpH};
+  return{beat:+(gpH*bi[i]).toFixed(1),reach:+(gpH*(.97+(bi[i]-.97)*.3)).toFixed(1),run:+(gpH*ri[i]).toFixed(1)};
+}
 function legDist(n,c){const r=Math.max(0.1,+(c.mark1Dist+c.mark1aDist-c.gateDist).toFixed(3));return[c.mark1Dist,c.mark1aDist,r,c.mark1Dist,c.mark1aDist,r][n-1]||c.mark1Dist;}
 function totalDist(c){return Array.from({length:6},(_,i)=>legDist(i+1,c)).reduce((a,b)=>a+b,0);}
-function computeStd(passages,startTime,fleet,course){return fleet.map(b=>{const done=passages.filter(p=>p.boatId===b.id).sort((a,z)=>z.leg-a.leg);if(!done.length||!startTime)return{b,ct:null,el:null,leg:0};const last=done[0],el=(last.realTime-startTime)/1000,dist=Array.from({length:last.leg},(_,i)=>legDist(i+1,course)).reduce((a,x)=>a+x,0);return{b,ct:b.gpH?el-b.gpH*dist:null,el,leg:last.leg};}).sort((a,z)=>a.ct!=null&&z.ct!=null?a.ct-z.ct:a.ct!=null?-1:z.ct!=null?1:0);}
+// Corrección de tiempo (ToD) por tramo usando la curva real del certificado.
+// Cada tramo se corrige con el allowance del ángulo correspondiente al viento
+// de la regata; si no hay curva, cae al ToD efectivo × distancia (legacy).
+function computeStd(passages,startTime,fleet,course,modeKey=DEFAULT_SCORING){
+  const tws=course?.windKnots||14;
+  const legType=n=>(n%3===1?"beat":n%3===2?"reach":"run"); // 1,4=ceñida 2,5=través 3,6=popa
+  return fleet.map(b=>{
+    const done=passages.filter(p=>p.boatId===b.id).sort((a,z)=>z.leg-a.leg);
+    if(!done.length||!startTime) return {b,ct:null,el:null,leg:0};
+    const last=done[0], el=(last.realTime-startTime)/1000;
+    let allowance=null;
+    if(hasValidRating(b,modeKey)){
+      const v=vpp(b,tws,modeKey);
+      allowance=0;
+      for(let i=1;i<=last.leg;i++){ const a=v[legType(i)]; if(a==null){allowance=null;break;} allowance+=a*legDist(i,course); }
+      if(allowance==null){ // sin curva: usar ToD efectivo escalar
+        const tod=ratingToD(b,tws,modeKey);
+        allowance = tod!=null ? tod*Array.from({length:last.leg},(_,i)=>legDist(i+1,course)).reduce((a,x)=>a+x,0) : null;
+      }
+    }
+    return {b, ct: allowance!=null ? el-allowance : null, el, leg:last.leg};
+  }).sort((a,z)=>a.ct!=null&&z.ct!=null?a.ct-z.ct:a.ct!=null?-1:z.ct!=null?1:0);
+}
 
 const Dot=({c,z=10})=>React.createElement("span",{style:{display:"inline-block",width:z,height:z,borderRadius:"50%",background:c,flexShrink:0}});
 const Mono=({v,z=13,c=CYN})=>React.createElement("span",{style:{fontFamily:"monospace",fontSize:z,fontWeight:700,color:c}},v);
@@ -612,19 +688,24 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           model: IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001",
-          max_tokens: 400,
+          max_tokens: 1200,
           messages:[{role:"user", content:[
             {type:"document", source:{type:"base64", media_type:"application/pdf", data:b64}},
-            {type:"text", text:`Este es un certificado ORC de rating de vela. Extrae estos valores exactos del certificado.
-Busca específicamente:
-- "APH ToD" o "All purpose" en la columna "Time On Distance" → este es el GPH
-- "APH ToT" o "All purpose" en la columna "Time On Time" → este es el ToT
-- Nombre del barco
-- Número de vela (sail number)
-- Tipo de barco (Class)
+            {type:"text", text:`Este es un certificado ORC 2026. Extrae los valores EXACTOS de las tablas. Las columnas de viento son siempre: 6,8,10,12,14,16,20 kt (ignora 4 kt y 24 kt).
 
-Responde SOLO con JSON (sin markdown):
-{"gpH":381.5,"gpT":1.5729,"boatName":"HISPANIA","sailNo":"ESP-10000","boatType":"TP 52","certNo":"1000002","validUntil":"2026-12-31"}`}
+1. Datos del barco: boatName, sailNo, boatType (Class), certNo, validUntil (formato YYYY-MM-DD).
+2. Tabla "Single Number Scoring Options": para Windward/Leeward y All purpose toma Time On Distance y Time On Time. De "Coastal/Long Distance" toma su Time On Distance.
+3. Tabla "Time Allowances in secs/NM" (página 2). Necesito tres filas como arrays de 7 números (6,8,10,12,14,16,20 kt):
+   - "Beat VMG" → beat
+   - la fila "90°" → r90
+   - "Run VMG" → run
+4. De "Selected Courses" toma las filas "Windward / Leeward" y "All purpose" como arrays de 7 (curvas wl y ap). De "Performance Curve" la fila "Coastal/Long Distance" como array de 7 (curva coastal).
+
+Responde SOLO JSON, sin markdown:
+{"boatName":"HISPANIA","sailNo":"ESP-10000","boatType":"TP 52","certNo":"1000002","validUntil":"2026-12-31",
+"single":{"wl_tod":477.7,"wl_tot":1.2560,"ap_tod":381.5,"ap_tot":1.5729,"cld_tod":416.4},
+"ta":{"beat":[686.6,574.5,533.0,510.6,496.7,486.7,475.9],"r90":[417.9,371.4,336.2,310.8,293.8,280.4,259.9],"run":[703.9,549.5,470.8,420.9,375.5,332.2,263.4]},
+"curves":{"wl":[695.2,562.0,501.9,465.7,436.1,409.5,369.6],"ap":[533.1,443.3,400.7,373.2,350.7,330.9,302.6],"coastal":[696.1,530.0,451.7,400.3,365.6,334.9,287.3]}}`}
           ]}]
         })
       });
@@ -642,11 +723,23 @@ Responde SOLO con JSON (sin markdown):
       if(!match){ setMsg("❌ No se pudo leer el certificado"); setBusy(false); return; }
 
       const rating = JSON.parse(match[0]);
-      if(!rating.gpH){ setMsg("❌ No se encontró el GPH en el certificado"); setBusy(false); return; }
+      const s = rating.single||{};
+      // Validación: exigimos al menos un número de scoring real
+      if(s.wl_tot==null && s.wl_tod==null && s.ap_tod==null){
+        setMsg("❌ No se encontraron los ratings (Single Number Scoring) en el certificado");
+        setBusy(false); return;
+      }
+      // Compatibilidad: gpH legacy = All Purpose ToD
+      if(s.ap_tod!=null) rating.gpH = s.ap_tod;
 
       onRatingExtracted(rating);
       setOk(true);
-      setMsg(`✅ GPH ${rating.gpH} · ToT ${rating.gpT||"—"} · ${rating.boatType||""} · válido hasta ${rating.validUntil||"—"}`);
+      const parts=[];
+      if(s.wl_tot!=null) parts.push(`W/L ToT ${s.wl_tot}`);
+      if(s.wl_tod!=null) parts.push(`W/L ToD ${s.wl_tod}`);
+      if(s.ap_tod!=null) parts.push(`AP ToD ${s.ap_tod}`);
+      const curvasOk = rating.ta?.beat?.length===7;
+      setMsg(`✅ ${rating.boatType||""} · ${parts.join(" · ")}${curvasOk?" · curvas ✓":" · sin curvas"} · válido hasta ${rating.validUntil||"—"}`);
     }catch(e){
       setMsg("❌ Error: "+e.message);
     }
@@ -855,14 +948,27 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
           <div style={{marginTop:10,padding:"8px 10px",background:CARD2,borderRadius:8,border:`1px solid ${CYN}33`}}>
             <div style={{fontSize:10,fontWeight:700,color:CYN,marginBottom:6}}>📋 Rating ORC</div>
 
-            {/* Upload certificado ORC — extrae GPH automáticamente */}
+            {/* Upload certificado ORC — extrae el rating completo (curvas + scoring) */}
             <OrcCertUploader boatName={b.name} sailNo={b.sailNo}
               onRatingExtracted={rating=>{
-                if(rating.gpH)   onUpdate("gpH",   rating.gpH);
-                if(rating.gpT)   onUpdate("gpT",   rating.gpT);
-                if(rating.cdl)   onUpdate("cdl",   rating.cdl);
+                // Guardamos el certificado completo, no solo un escalar
+                onUpdate("rating", {single:rating.single, ta:rating.ta, curves:rating.curves});
+                if(rating.gpH)      onUpdate("gpH", rating.gpH);          // legacy / All Purpose ToD
+                if(rating.single?.ap_tot) onUpdate("gpT", rating.single.ap_tot);
                 if(rating.boatType) onUpdate("boatType", rating.boatType);
+                if(rating.certNo)   onUpdate("certNo", rating.certNo);
+                if(rating.validUntil) onUpdate("validUntil", rating.validUntil);
               }}/>
+
+            {b.rating&&(
+              <div style={{marginTop:8,padding:"6px 9px",background:`${GRN}12`,border:`1px solid ${GRN}33`,borderRadius:7,fontSize:9,color:GRN,lineHeight:1.6}}>
+                Certificado cargado{b.certNo?` · nº ${b.certNo}`:""}{b.validUntil?` · válido hasta ${b.validUntil}`:""}<br/>
+                {b.rating.single?.wl_tot!=null&&<>W/L ToT <strong>{b.rating.single.wl_tot}</strong> · </>}
+                {b.rating.single?.wl_tod!=null&&<>W/L ToD <strong>{b.rating.single.wl_tod}</strong> · </>}
+                {b.rating.single?.ap_tod!=null&&<>AP ToD <strong>{b.rating.single.ap_tod}</strong> · </>}
+                {b.rating.ta?.beat?.length===7?"curvas ✓":"sin curvas (usará single number)"}
+              </div>
+            )}
 
             {/* Edición manual como fallback */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:8}}>
@@ -1622,6 +1728,21 @@ function TabConfig({state,setState,race}){
             <input value={state.champ.name} onChange={e=>setState(s=>({...s,champ:{...s.champ,name:e.target.value}}))} placeholder="ORC World Championship 2026"/>
           </Card>
 
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Modo de cálculo (scoring ORC)"/>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:4}}>
+              {SCORING_MODES.map(m=>{
+                const active=(state.champ.scoringMode||DEFAULT_SCORING)===m.key;
+                return <button key={m.key} onClick={()=>setState(s=>({...s,champ:{...s.champ,scoringMode:m.key}}))} style={{
+                  padding:"5px 10px",borderRadius:20,fontSize:11,fontWeight:700,
+                  background:active?ACC:CARD2,color:active?"#fff":T2,border:`1px solid ${active?ACC:BDR}`}}>{m.label}</button>;
+              })}
+            </div>
+            <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.5}}>
+              Por defecto W/L ToT. Cada regata puede sobreescribirlo en 🏁 Regatas. ToT corrige por tiempo, ToD por distancia.
+            </div>
+          </Card>
+
           <ChampLinks state={state} setState={setState}/>
 
           {/* Sincronizar resultados ORC */}
@@ -1665,7 +1786,7 @@ function TabEnVivo({state,setState,role="patron"}){
   // Clasificación en tiempo real
   const liveStandings = useMemo(()=>{
     if(!started||!activeRace) return [];
-    const std = computeStd(passages, startTime, fleet, course);
+    const std = computeStd(passages, startTime, fleet, course, activeRace?.scoringMode||state.champ?.scoringMode||DEFAULT_SCORING);
     return std.map((s,i)=>({...s, pos:s.ct!=null?i+1:null})).filter(s=>s.ct!=null||passages.some(p=>p.boatId===s.b?.id));
   },[passages, startTime, fleet, course, started]);
   const [voiceOn,    setVoiceOn]   = useState(false);
@@ -1754,7 +1875,7 @@ function TabEnVivo({state,setState,role="patron"}){
     return [...legs].sort((a,b)=>a-b);
   },[fleet,passages]);
 
-  const standings = useMemo(()=>computeStd(passages,startTime,fleet,course),[passages,startTime,fleet,course]);
+  const standings = useMemo(()=>computeStd(passages,startTime,fleet,course,activeRace?.scoringMode||state.champ?.scoringMode||DEFAULT_SCORING),[passages,startTime,fleet,course,activeRace,state.champ]);
 
   // ── Early return DESPUÉS de todos los hooks ─────────────────────────────
   if(!activeRace) return React.createElement("div",{style:{padding:20,color:T2,textAlign:"center"}},"Sin prueba activa. Crea una en Config.");
@@ -2493,14 +2614,15 @@ function TabTablas({state,race}){
   const [refW,setRefW]=useState(course.windKnots||14);
   const [mode,setMode]=useState("tabla");
   const own=state.fleet.find(b=>b.id===state.champ.ownId);
+  const sMode=race?.scoringMode||state.champ.scoringMode||DEFAULT_SCORING;
   const ld=n=>legDist(n,course);
 
   // Comparativa: calcular diferencias totales y ordenar por mayor ventaja primero
   const rivals = useMemo(()=>{
-    if(!own?.gpH) return [];
-    const ov=vpp(own.gpH,refW);
-    return state.fleet.filter(b=>b.gpH&&b.id!==own.id).map(b=>{
-      const bv=vpp(b.gpH,refW);
+    if(!hasValidRating(own,sMode)) return [];
+    const ov=vpp(own,refW,sMode);
+    return state.fleet.filter(b=>hasValidRating(b,sMode)&&b.id!==own.id).map(b=>{
+      const bv=vpp(b,refW,sMode);
       const dB1   = ov.beat *ld(1)-bv.beat *ld(1);
       const dR1   = ov.reach*ld(2)-bv.reach*ld(2);
       const dRun1 = ov.run  *ld(3)-bv.run  *ld(3);
@@ -2510,7 +2632,7 @@ function TabTablas({state,race}){
       const dT = dBTotal+dRTotal+dRunTotal;
       return {b, dB1, dR1, dRun1, dBTotal, dRTotal, dRunTotal, dT};
     }).sort((a,z)=>z.dT-a.dT);
-  },[own, refW, state.fleet, course]);
+  },[own, refW, state.fleet, course, sMode]);
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{padding:"8px 12px",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0}}>
@@ -2520,8 +2642,8 @@ function TabTablas({state,race}){
         <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
           {WINDS.map(w=><button key={w} onClick={()=>setRefW(w)} style={{padding:"4px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:refW===w?GLD:CARD2,color:refW===w?"#000":T2,border:`1px solid ${refW===w?GLD:BDR}`}}>{w}kts</button>)}
         </div>
-        {mode==="tabla"&&[...state.fleet.filter(b=>b.gpH)].sort((a,z)=>a.gpH-z.gpH).map(b=>{
-          const v=vpp(b.gpH,refW),total=(v.beat*ld(1)+v.reach*ld(2)+v.run*ld(3))*2,isOwn=b.id===state.champ.ownId;
+        {mode==="tabla"&&[...state.fleet.filter(b=>hasValidRating(b,sMode))].sort((a,z)=>ratingToD(a,refW,sMode)-ratingToD(z,refW,sMode)).map(b=>{
+          const v=vpp(b,refW,sMode),total=(v.beat*ld(1)+v.reach*ld(2)+v.run*ld(3))*2,isOwn=b.id===state.champ.ownId;
           // El certificado ORC requiere un ID interno que cambia anualmente
           // Google siempre encuentra el certificado correcto
           const boatShortName = b.name.replace(/^[A-Z]+\s+/,''); // quitar sponsor (VITHAS URBANIA → URBANIA)
@@ -2536,7 +2658,7 @@ function TabTablas({state,race}){
                 <div style={{flex:1}}>
                   <span style={{fontSize:12,fontWeight:700,color:isOwn?b.color:"#fff"}}>{b.name}{isOwn?" ⭐":""}</span>
                   <div style={{display:"flex",gap:6,alignItems:"center",marginTop:1}}>
-                    <span style={{fontSize:9,color:CYN,fontFamily:"monospace",fontWeight:700}}>GPH {b.gpH}</span>
+                    <span style={{fontSize:9,color:CYN,fontFamily:"monospace",fontWeight:700}}>{scoringMode(sMode).label} {ratingToD(b,refW,sMode)?.toFixed(1)??"—"}</span>
                     <a href={googleUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:9,color:ACC,fontWeight:700}}>🔍 Certificado ORC →</a>
                     <a href={orcDirectUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:9,color:T3}}>data.orc.org</a>
                   </div>
@@ -2557,7 +2679,7 @@ function TabTablas({state,race}){
                     {[["↑",GLD,"beat",1],["↔",PRP,"reach",2],["↓",CYN,"run",3]].map(([sym,col,type,n])=>(
                       <tr key={type}>
                         <td style={{color:col,padding:"2px 3px"}}>{sym}</td>
-                        {WINDS.map(w=>{const val=vpp(b.gpH,w)[type]*ld(n);return <td key={w} style={{padding:"2px 4px",textAlign:"center",fontFamily:"monospace",color:w===refW?col:T1,background:w===refW?`${col}18`:""}}>{ft(val)}</td>;})}
+                        {WINDS.map(w=>{const val=vpp(b,w,sMode)[type]*ld(n);return <td key={w} style={{padding:"2px 4px",textAlign:"center",fontFamily:"monospace",color:w===refW?col:T1,background:w===refW?`${col}18`:""}}>{ft(val)}</td>;})}
                       </tr>
                     ))}
                   </tbody>
@@ -2566,8 +2688,8 @@ function TabTablas({state,race}){
             </Card>
           );
         })}
-        {mode==="comparativa"&&!own?.gpH&&<div style={{color:T2,textAlign:"center",padding:"20px 0"}}>Asigna GPH a tu barco en Config</div>}
-        {mode==="comparativa"&&own?.gpH&&(
+        {mode==="comparativa"&&!hasValidRating(own,sMode)&&<div style={{color:T2,textAlign:"center",padding:"20px 0"}}>Sube el certificado ORC de tu barco en Config para ver la comparativa</div>}
+        {mode==="comparativa"&&hasValidRating(own,sMode)&&(
           <>
             <div style={{padding:"8px 10px",background:CARD2,borderRadius:8,marginBottom:12,fontSize:10,color:T2,lineHeight:1.6}}>
               Diferencia total de carrera vs <strong style={{color:own.color}}>{own.name}</strong> a {refW}kts · {(totalDist(course)).toFixed(2)}nm<br/>
@@ -2581,7 +2703,7 @@ function TabTablas({state,race}){
                   </div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{b.name}</div>
-                    <div style={{fontSize:9,color:T2}}>GPH {b.gpH} · {b.cls}</div>
+                    <div style={{fontSize:9,color:T2}}>{scoringMode(sMode).label} {ratingToD(b,refW,sMode)?.toFixed(1)??"—"} · {b.cls}</div>
                   </div>
                   <div style={{textAlign:"right"}}>
                     <div style={{fontSize:8,color:T2}}>Total carrera</div>
@@ -2722,7 +2844,7 @@ function TabResultados({state,setState}){
   };
 
   // Clasificación local (calculada desde los tiempos registrados en la app)
-  const getRaceStd=r=>computeStd(r.passages,r.startTime,state.fleet,r.course).map((x,i)=>({...x,pos:x.ct!=null?i+1:state.fleet.length+1}));
+  const getRaceStd=r=>computeStd(r.passages,r.startTime,state.fleet,r.course,r.scoringMode||state.champ?.scoringMode||DEFAULT_SCORING).map((x,i)=>({...x,pos:x.ct!=null?i+1:state.fleet.length+1}));
   const localChamp = state.fleet.map(b=>{
     let nett=0;
     const byRace=state.races.map(r=>{
@@ -2882,12 +3004,16 @@ ${text.slice(0,5000)}`}]
     const COLORS=["#e74c3c","#3498db","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22","#e91e63","#00bcd4","#8bc34a","#ff5722","#607d8b","#795548","#ff9800","#673ab7"];
     const fleet = boats.map((b,i)=>({
       ...b, id:`m${i}_${Date.now()}`,
-      gpH: b.gpH||b.gph||580,
+      // NO fabricamos rating. Sin certificado el barco queda "pendiente" (gpH=null)
+      // y la app lo marcará en rojo / lo bloqueará para clasificación.
+      gpH: (b.gpH||b.gph||null),
+      rating: b.rating||null,
       color:COLORS[i%COLORS.length],
       hullColor:COLORS[i%COLORS.length],
       trimBands:[], own:false
     }));
-    setMsg(`✅ ${fleet.length} barcos extraídos correctamente`);
+    const sinRating = fleet.filter(b=>!hasValidRating(b)&&!b.gpH).length;
+    setMsg(`✅ ${fleet.length} barcos extraídos${sinRating?` · ⚠️ ${sinRating} sin certificado ORC (súbelos para que puntúen)`:""}`);
     onFleetParsed(fleet);
   };
 
@@ -3029,48 +3155,74 @@ async function fetchOrcResults(url){
   return null;
 }
 // ── TROFEO CONDE DE GODÓ 2026 — 53ª edición · datos del PDF oficial ─────────
+// Ratings ORC 2026 REALES — extraídos de los certificados oficiales (validez 31/12/2026).
+// single: Single Number Scoring · ta: Time Allowances secs/NM (6,8,10,12,14,16,20 kt)
+//         beat=Beat VMG, r90=fila 90°, run=Run VMG · curves: Selected Courses / Performance Curve
+const GODO_RATINGS = {
+  ESP10000:{ // HISPANIA · cert RJT 1000002
+    single:{wl_tod:477.7,wl_tot:1.2560,ap_tod:381.5,ap_tot:1.5729,cld_tod:416.4},
+    ta:{beat:[686.6,574.5,533.0,510.6,496.7,486.7,475.9],r90:[417.9,371.4,336.2,310.8,293.8,280.4,259.9],run:[703.9,549.5,470.8,420.9,375.5,332.2,263.4]},
+    curves:{wl:[695.2,562.0,501.9,465.7,436.1,409.5,369.6],ap:[533.1,443.3,400.7,373.2,350.7,330.9,302.6],coastal:[696.1,530.0,451.7,400.3,365.6,334.9,287.3]}},
+  ESP15025:{ // TENAZ · cert R4T 1502501
+    single:{wl_tod:522.6,wl_tot:1.1481,ap_tod:418.1,ap_tot:1.4350,cld_tod:456.1},
+    ta:{beat:[763.9,636.0,587.8,563.2,548.2,537.4,527.8],r90:[460.4,401.6,370.9,346.8,330.5,319.1,301.7],run:[754.8,591.5,502.0,449.1,411.8,375.0,304.3]},
+    curves:{wl:[759.3,613.7,544.9,506.1,480.0,456.2,416.1],ap:[582.2,481.0,435.0,407.4,387.5,370.3,342.4],coastal:[758.9,577.5,490.5,436.5,403.3,373.9,326.1]}},
+  ESP52801:{ // URBANIA · cert RH9 5280102
+    single:{wl_tod:493.8,wl_tot:1.2150,ap_tod:391.3,ap_tot:1.5334,cld_tod:428.5},
+    ta:{beat:[731.0,604.3,556.5,531.5,515.9,504.9,493.1],r90:[434.4,380.6,344.5,317.9,300.7,287.8,267.4],run:[727.4,564.8,479.3,428.1,383.9,341.3,271.4]},
+    curves:{wl:[729.2,584.6,517.9,479.8,449.9,423.1,382.2],ap:[555.9,457.4,410.5,381.3,358.7,339.7,311.1],coastal:[729.0,550.1,465.1,410.9,374.1,342.1,292.8]}},
+  ESP7552:{ // SAIOLA XIV (cert aportado para BLUE CARBON) · cert N7U 755202
+    single:{wl_tod:496.6,wl_tot:1.2083,ap_tod:394.1,ap_tot:1.5225,cld_tod:431.2},
+    ta:{beat:[734.3,609.7,562.8,538.3,523.1,512.5,501.5],r90:[433.7,381.8,347.5,322.0,304.9,292.1,271.9],run:[722.2,561.3,477.9,427.5,383.6,340.6,271.4]},
+    curves:{wl:[728.3,585.5,520.3,482.9,453.4,426.5,386.5],ap:[555.3,458.6,413.0,384.4,362.2,343.3,315.2],coastal:[727.7,550.9,467.5,414.2,377.6,345.6,296.5]}},
+  ESP888:{ // ENIGMA · cert RJI 888002
+    single:{wl_tod:520.3,wl_tot:1.1533,ap_tod:419.7,ap_tot:1.4296,cld_tod:457.0},
+    ta:{beat:[766.9,633.3,578.0,553.9,539.7,530.4,518.8],r90:[459.1,402.7,378.7,360.5,342.7,328.8,310.1],run:[740.9,587.3,502.9,452.1,418.9,386.3,314.9]},
+    curves:{wl:[753.9,610.3,540.5,503.0,479.3,458.3,416.9],ap:[578.9,480.8,435.8,409.4,390.4,373.8,345.1],coastal:[752.6,575.0,488.9,437.6,406.5,377.9,328.3]}},
+};
+
 const GODO_2026_ALL = [
-  {sailNo:"ESP10000",name:"HISPANIA",               cls:"ORC 0", boatType:"TP 52",       nation:"ESP",gpH:381.5, bowNum:6},
-  {sailNo:"ESP15025",name:"TENAZ",                  cls:"ORC 0", boatType:"Swan 50",    nation:"ESP",gpH:580},
-  {sailNo:"ESP52801",name:"URBANIA",                cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:561,own:true,
+  {sailNo:"ESP10000",name:"HISPANIA",               cls:"ORC 0", boatType:"TP 52",       nation:"ESP",gpH:381.5, bowNum:6, rating:GODO_RATINGS.ESP10000},
+  {sailNo:"ESP15025",name:"TENAZ",                  cls:"ORC 0", boatType:"Swan 50 CS", nation:"ESP",gpH:418.1, rating:GODO_RATINGS.ESP15025},
+  {sailNo:"ESP52801",name:"URBANIA",                cls:"ORC 0", boatType:"Soto 52",    nation:"ESP",gpH:391.3,own:true, rating:GODO_RATINGS.ESP52801,
     hullColor:"#111111",color:"#22c55e",trimBandsMain:["#22c55e","#22c55e","#22c55e"],mainColor:"#111111",jibColor:"#111111",spiColor:"#22c55e"},
-  {sailNo:"ESP7552", name:"APROPERTIES BLUE CARBON",cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:561,
+  {sailNo:"ESP7552", name:"APROPERTIES BLUE CARBON",cls:"ORC 0", boatType:"TP 52",      nation:"ESP",gpH:394.1, rating:GODO_RATINGS.ESP7552,
     hullColor:"#f8fafc",color:"#f97316",trimBandsMain:["#f97316","#f97316"],mainColor:"#111111",jibColor:"#111111",spiColor:"#f97316"},
-  {sailNo:"ESP888",  name:"ENIGMA",                 cls:"ORC 0", boatType:"",           nation:"ESP",gpH:580},
-  {sailNo:"ESP11047",name:"VIKINGO ENERTIVA",       cls:"ORC 1", boatType:"",           nation:"ESP",gpH:600},
-  {sailNo:"ESP19981",name:"HYDRA HM HOSPITALES",    cls:"ORC 1", boatType:"",           nation:"ESP",gpH:600},
-  {sailNo:"ESP42",   name:"KILOTÓN",                cls:"ORC 1", boatType:"",           nation:"ESP",gpH:600},
-  {sailNo:"10005",   name:"MAXIMO",                 cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
-  {sailNo:"ARG5900", name:"KATARA",                 cls:"ORC 2", boatType:"",           nation:"ARG",gpH:630},
-  {sailNo:"AUT255",  name:"GODSPEED",               cls:"ORC 2", boatType:"",           nation:"AUT",gpH:630},
-  {sailNo:"ES5906",  name:"CARONTE",                cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
-  {sailNo:"ESP36940",name:"EBURY SAILING TEAM",     cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
-  {sailNo:"ESP6681", name:"MSC",                    cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
-  {sailNo:"ESP8345", name:"MIAJA X",                cls:"ORC 2", boatType:"",           nation:"ESP",gpH:630},
-  {sailNo:"GBR66",   name:"L'IMMENS",               cls:"ORC 2", boatType:"",           nation:"GBR",gpH:630},
-  {sailNo:"ITA14840",name:"FLYING CLOUD",           cls:"ORC 2", boatType:"",           nation:"ITA",gpH:630},
-  {sailNo:"ITA4149", name:"MAGICA",                 cls:"ORC 2", boatType:"",           nation:"ITA",gpH:630},
-  {sailNo:"LUX1544", name:"MOLIBDÈ",                cls:"ORC 2", boatType:"",           nation:"LUX",gpH:630},
-  {sailNo:"NED6169", name:"ELKE",                   cls:"ORC 2", boatType:"",           nation:"NED",gpH:630},
-  {sailNo:"ESP20500",name:"HYDRA YOUTH",            cls:"ORC 3", boatType:"Melges 32",  nation:"ESP",gpH:660},
-  {sailNo:"ESP7669", name:"FALA POUCO",             cls:"ORC 3", boatType:"",           nation:"ESP",gpH:660},
-  {sailNo:"ESP8501", name:"EDUMAN",                 cls:"ORC 3", boatType:"",           nation:"ESP",gpH:660},
-  {sailNo:"ESP7875", name:"TRAMENDU",               cls:"ORC 3", boatType:"",           nation:"ESP",gpH:660},
-  {sailNo:"ESP8466", name:"SÁLVORA",                cls:"ORC 3", boatType:"",           nation:"ESP",gpH:660},
-  {sailNo:"FRA37585",name:"OBLONGO",                cls:"ORC 3", boatType:"",           nation:"FRA",gpH:660},
-  {sailNo:"GBR234",  name:"SAIOLA X",               cls:"ORC 3", boatType:"",           nation:"GBR",gpH:660},
-  {sailNo:"ITA78",   name:"MILKWAVE",               cls:"ORC 3", boatType:"",           nation:"ITA",gpH:660},
-  {sailNo:"NED7680", name:"YELLOW ROSE",            cls:"ORC 3", boatType:"",           nation:"NED",gpH:660},
+  {sailNo:"ESP888",  name:"ENIGMA",                 cls:"ORC 0", boatType:"Farr 52 OD", nation:"ESP",gpH:419.7, rating:GODO_RATINGS.ESP888},
+  {sailNo:"ESP11047",name:"VIKINGO ENERTIVA",       cls:"ORC 1", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP19981",name:"HYDRA HM HOSPITALES",    cls:"ORC 1", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP42",   name:"KILOTÓN",                cls:"ORC 1", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"10005",   name:"MAXIMO",                 cls:"ORC 2", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ARG5900", name:"KATARA",                 cls:"ORC 2", boatType:"",           nation:"ARG",gpH:null},
+  {sailNo:"AUT255",  name:"GODSPEED",               cls:"ORC 2", boatType:"",           nation:"AUT",gpH:null},
+  {sailNo:"ES5906",  name:"CARONTE",                cls:"ORC 2", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP36940",name:"EBURY SAILING TEAM",     cls:"ORC 2", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP6681", name:"MSC",                    cls:"ORC 2", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP8345", name:"MIAJA X",                cls:"ORC 2", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"GBR66",   name:"L'IMMENS",               cls:"ORC 2", boatType:"",           nation:"GBR",gpH:null},
+  {sailNo:"ITA14840",name:"FLYING CLOUD",           cls:"ORC 2", boatType:"",           nation:"ITA",gpH:null},
+  {sailNo:"ITA4149", name:"MAGICA",                 cls:"ORC 2", boatType:"",           nation:"ITA",gpH:null},
+  {sailNo:"LUX1544", name:"MOLIBDÈ",                cls:"ORC 2", boatType:"",           nation:"LUX",gpH:null},
+  {sailNo:"NED6169", name:"ELKE",                   cls:"ORC 2", boatType:"",           nation:"NED",gpH:null},
+  {sailNo:"ESP20500",name:"HYDRA YOUTH",            cls:"ORC 3", boatType:"Melges 32",  nation:"ESP",gpH:null},
+  {sailNo:"ESP7669", name:"FALA POUCO",             cls:"ORC 3", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP8501", name:"EDUMAN",                 cls:"ORC 3", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP7875", name:"TRAMENDU",               cls:"ORC 3", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP8466", name:"SÁLVORA",                cls:"ORC 3", boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"FRA37585",name:"OBLONGO",                cls:"ORC 3", boatType:"",           nation:"FRA",gpH:null},
+  {sailNo:"GBR234",  name:"SAIOLA X",               cls:"ORC 3", boatType:"",           nation:"GBR",gpH:null},
+  {sailNo:"ITA78",   name:"MILKWAVE",               cls:"ORC 3", boatType:"",           nation:"ITA",gpH:null},
+  {sailNo:"NED7680", name:"YELLOW ROSE",            cls:"ORC 3", boatType:"",           nation:"NED",gpH:null},
   {sailNo:"ESP8688", name:"BLUE STAR V",            cls:"ORC 4", boatType:"",           nation:"ESP",gpH:700},
   {sailNo:"ESP9743", name:"SWAHILI",                cls:"ORC 4", boatType:"",           nation:"ESP",gpH:700},
   {sailNo:"ESP7565", name:"ILDEMAR IV",             cls:"ORC 4", boatType:"",           nation:"ESP",gpH:700},
   {sailNo:"ESP6539", name:"EL TRAVIESO",            cls:"ORC 4", boatType:"",           nation:"ESP",gpH:700},
   {sailNo:"GER8059", name:"LIKEDEELER",             cls:"ORC 4", boatType:"",           nation:"GER",gpH:700},
-  {sailNo:"ESP1481", name:"WILD",                   cls:"ORC A2",boatType:"",           nation:"ESP",gpH:650},
-  {sailNo:"ESP287",  name:"IA ORANA",               cls:"ORC A2",boatType:"",           nation:"ESP",gpH:650},
-  {sailNo:"ESP48",   name:"RIBES & CASALS",         cls:"ORC A2",boatType:"Beneteau F2",nation:"ESP",gpH:650},
-  {sailNo:"ESP8338", name:"COMETA",                 cls:"ORC A2",boatType:"",           nation:"ESP",gpH:650},
-  {sailNo:"SUI22",   name:"BONADVENTURE",           cls:"ORC A2",boatType:"",           nation:"SUI",gpH:650},
+  {sailNo:"ESP1481", name:"WILD",                   cls:"ORC A2",boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP287",  name:"IA ORANA",               cls:"ORC A2",boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"ESP48",   name:"RIBES & CASALS",         cls:"ORC A2",boatType:"Beneteau F2",nation:"ESP",gpH:null},
+  {sailNo:"ESP8338", name:"COMETA",                 cls:"ORC A2",boatType:"",           nation:"ESP",gpH:null},
+  {sailNo:"SUI22",   name:"BONADVENTURE",           cls:"ORC A2",boatType:"",           nation:"SUI",gpH:null},
   {sailNo:"ESP800",  name:"TÒTIL",                  cls:"ORC OPEN",boatType:"FC8",      nation:"ESP",gpH:700},
 ].map((b,i)=>({...b,id:`godo26_${i}`,bowNum:i+1,
   color:BOAT_COLORS[i%BOAT_COLORS.length],hullColor:BOAT_COLORS[i%BOAT_COLORS.length],trimBands:[]}));
@@ -3150,6 +3302,7 @@ function NewChampWizard({onClose, onCreate}){
   const [allBoats,setAllBoats] = useState([]); // todos los barcos encontrados
   const [fleet,setFleet] = useState([]);        // barcos de la clase seleccionada
   const [ownId,setOwnId] = useState("");
+  const [scoring,setScoring] = useState(DEFAULT_SCORING);
   const [loading,setLoading] = useState(false);
   const [err,setErr] = useState("");
   const [manualName,setManualName] = useState("");
@@ -3217,6 +3370,10 @@ function NewChampWizard({onClose, onCreate}){
   const finish = ()=>{
     if(!champName.trim()||!fleet.length){setErr("Faltan datos.");return;}
     const ownBoat = fleet.find(b=>b.id===ownId)||fleet[0];
+    if(!hasValidRating(ownBoat,scoring)){
+      setErr(`Tu barco (${ownBoat?.name}) no tiene certificado ORC válido para ${scoringMode(scoring).label}. Súbelo en ⚙️ Barcos antes de crear el campeonato.`);
+      return;
+    }
     // Guardar también los links descubiertos
     onCreate({
       name: champName.trim(),
@@ -3227,6 +3384,7 @@ function NewChampWizard({onClose, onCreate}){
       resultsUrl:   confirmedLinks.resultsUrl||discoveredUrls.resultsUrl||"",
       docsUrl:      confirmedLinks.docsUrl||discoveredUrls.docsUrl||"",
       photosUrl:    discoveredUrls.photosUrl||"",
+      scoringMode:  scoring,
     });
   };
 
@@ -3480,19 +3638,44 @@ function NewChampWizard({onClose, onCreate}){
                     <div style={{fontSize:9,color:T2}}>{b.sailNo}{b.cls?" · "+b.cls:""}</div>
                   </div>
                   <div style={{textAlign:"right",flexShrink:0}}>
-                    {b.gpH
-                      ? <span style={{fontSize:11,fontFamily:"monospace",color:CYN}}>{b.gpH}</span>
-                      : <span style={{fontSize:9,color:T3}}>GPH —</span>}
+                    {hasValidRating(b,scoring)
+                      ? <span style={{fontSize:11,fontFamily:"monospace",color:CYN}}>{ratingToD(b,14,scoring)?.toFixed(1)}</span>
+                      : <span style={{fontSize:9,color:RED,fontWeight:700}}>sin cert.</span>}
                     {ownId===b.id&&<div style={{fontSize:14,lineHeight:1}}>⭐</div>}
                   </div>
                 </button>
               ))}
             </div>
             {!ownId&&<div style={{color:GLD,fontSize:11,marginBottom:8}}>⚠️ Selecciona tu barco para continuar</div>}
+
+            {/* Modo de scoring — editable luego por regata */}
+            <div style={{background:CARD2,borderRadius:9,padding:"10px 11px",marginBottom:10}}>
+              <div style={{fontSize:10,color:T2,marginBottom:6,fontWeight:700}}>📐 Modo de cálculo (cómo se corrige el tiempo)</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {SCORING_MODES.map(m=>(
+                  <button key={m.key} onClick={()=>setScoring(m.key)} style={{
+                    padding:"5px 10px",borderRadius:20,fontSize:11,fontWeight:700,
+                    background:scoring===m.key?ACC:CARD,color:scoring===m.key?"#fff":T2,
+                    border:`1px solid ${scoring===m.key?ACC:BDR}`}}>{m.label}</button>
+                ))}
+              </div>
+              <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.5}}>
+                Windward/Leeward para barlovento-sotavento · Coastal para regatas largas. ToT (tiempo) o ToD (distancia) según anuncio de regata.
+              </div>
+            </div>
+
+            {/* Aviso de barcos sin certificado para el modo elegido */}
+            {(()=>{ const pend=fleet.filter(b=>!hasValidRating(b,scoring)); return pend.length>0&&(
+              <div style={{background:`${RED}12`,border:`1px solid ${RED}40`,borderRadius:9,padding:"9px 11px",marginBottom:10,fontSize:10,color:RED,lineHeight:1.6}}>
+                ⚠️ <strong>{pend.length} barco{pend.length>1?"s":""} sin rating válido</strong> para {scoringMode(scoring).label}: {pend.slice(0,6).map(b=>b.name).join(", ")}{pend.length>6?"…":""}.<br/>
+                <span style={{color:T2}}>Entrarán como "pendientes" y no puntuarán hasta que subas su certificado ORC en ⚙️ Barcos.</span>
+              </div>
+            );})()}
+
             {err&&<div style={{color:RED,fontSize:11,marginBottom:8}}>{err}</div>}
             <div style={{display:"flex",gap:7}}>
               <Btn v="← Atrás" onClick={()=>setStep(foundClasses.length>1?"3c":3)} c="dim"/>
-              <Btn v="✓ Crear campeonato" onClick={finish} c="grn" fw lg dis={!ownId}/>
+              <Btn v="✓ Crear campeonato" onClick={finish} c="grn" fw lg dis={!ownId||!hasValidRating(fleet.find(b=>b.id===ownId),scoring)}/>
             </div>
             </>)}
           </>
@@ -3654,6 +3837,23 @@ function TabRegatas({state, setState, race}){
                   ?<div style={{fontSize:10,padding:"4px 8px",borderRadius:5,background:`${GRN}22`,color:GRN,fontWeight:700}}>✅ Completada / En curso</div>
                   :<div style={{fontSize:10,padding:"4px 8px",borderRadius:5,background:`${GLD}22`,color:GLD,fontWeight:700}}>⏳ Pendiente</div>
                 }
+              </div>
+
+              {/* Override de scoring por prueba */}
+              <div style={{background:CARD2,borderRadius:8,padding:"8px 10px",marginBottom:8}}>
+                <div style={{fontSize:9,color:T2,marginBottom:5,fontWeight:700}}>📐 Cálculo de esta prueba {race.scoringMode?"":"(usa el del campeonato)"}</div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  <button onClick={()=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,scoringMode:null}:r)}))}
+                    style={{padding:"4px 9px",borderRadius:16,fontSize:10,fontWeight:700,
+                      background:!race.scoringMode?GLD:CARD,color:!race.scoringMode?"#000":T2,border:`1px solid ${!race.scoringMode?GLD:BDR}`}}>
+                    Campeonato ({scoringMode(state.champ.scoringMode||"AP_ToD").label})
+                  </button>
+                  {SCORING_MODES.map(m=>(
+                    <button key={m.key} onClick={()=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,scoringMode:m.key}:r)}))}
+                      style={{padding:"4px 9px",borderRadius:16,fontSize:10,fontWeight:700,
+                        background:race.scoringMode===m.key?ACC:CARD,color:race.scoringMode===m.key?"#fff":T2,border:`1px solid ${race.scoringMode===m.key?ACC:BDR}`}}>{m.label}</button>
+                  ))}
+                </div>
               </div>
               {!race.startTime&&(
                 <div>
