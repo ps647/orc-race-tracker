@@ -227,7 +227,34 @@ Responde ÚNICAMENTE con JSON sin markdown:
   }catch(e){ console.warn("analyzeBoatColors error:",e); }
   return null;
 }
-// Cache de URLs de fotos del servidor Vercel Blob
+// Extraer clasificación de campeonato desde una captura de pantalla de resultados
+async function extractResultsFromImage(base64Image, mediaType="image/jpeg"){
+  try{
+    const res = await fetch(CLAUDE_API,{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        model: IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001",
+        max_tokens: 3000,
+        messages:[{role:"user", content:[
+          {type:"image", source:{type:"base64", media_type:mediaType, data:base64Image.replace(/^data:image\/\w+;base64,/,"")}},
+          {type:"text", text:`Esta es una captura de una tabla de clasificación general de una regata ORC.
+Extrae para cada barco: su nº de vela (N.Vela), nombre (Yate), nacionalidad si aparece, modelo/clase, las posiciones de cada prueba individual (columnas numeradas 1,2,3... antes de Puntos/Total) y el total de puntos.
+Responde ÚNICAMENTE con JSON sin markdown, sin texto antes ni después:
+{"eventName":"...","numRaces":2,"overallStandings":[{"pos":1,"sailNo":"ESP52801","boat":"VITHAS URBANIA","nation":"ESP","cls":"SOTO 52","breakdown":[1,2],"totalPts":3}]}
+- breakdown: array con la posición de cada prueba EN ORDEN (R1, R2...). Si una celda pone "DNF","DNC","RET","DSQ" etc., ponla como el texto tal cual (ej. "16 DNF").
+- totalPts: el número de la columna Puntos/Total.
+- Ordena overallStandings por posición (pos) ascendente.`}
+        ]}]
+      })
+    });
+    const data = await res.json();
+    const raw = (data.content||[]).map(c=>c.text||"").join("");
+    const m = raw.match(/\{[\s\S]*"overallStandings"[\s\S]*\}/);
+    if(m){ try{ const p=JSON.parse(m[0]); if(p.overallStandings?.length) return p; }catch{} }
+  }catch(e){ console.warn("extractResultsFromImage error:",e); }
+  return null;
+}
+
 const _srvPhotoCache = {};
 
 async function loadServerPhotos(){
@@ -282,7 +309,7 @@ function parseVoiceInput(text, fleet) {
 }
 const WINDS=[6,8,10,12,14,16,20];
 const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
-const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:"",scoringMode:"AP_ToD"},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
+const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:"",scoringMode:"AP_ToD",discardEvery:4,discardMin:4},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
 const LEG_DEF=[
   {n:1,mark:"Boya 1",   type:"beat", label:"Ceñida 1",    col:"#d97706"},
   {n:2,mark:"Offset 1a",type:"reach",label:"Través 1",    col:"#7c3aed"},
@@ -334,6 +361,24 @@ const SCORING_MODES = [
 ];
 const DEFAULT_SCORING = "WL_ToT";
 const scoringMode = k => SCORING_MODES.find(m=>m.key===k) || SCORING_MODES[0];
+
+// ── DESCARTES ────────────────────────────────────────────────────────────
+// races: [{pts:Number, nonDiscardable:Bool}] · una entrada por prueba puntuada.
+// discardEvery: cada cuántas pruebas válidas se descarta una (0 = sin descartes).
+// discardMin: nº mínimo de pruebas completadas para empezar a descartar.
+// Devuelve {total, discardedIdx:[índices descartados], counted}.
+function applyDiscards(races, discardEvery=4, discardMin=4){
+  const all = races.map((r,i)=>({pts:Number(r.pts)||0, nd:!!r.nonDiscardable, i}));
+  const n = all.length;
+  // nº de descartes permitidos: 1 cada discardEvery, solo si hay >= discardMin pruebas
+  let nDiscards = 0;
+  if(discardEvery>0 && n>=discardMin){ nDiscards = Math.floor(n/discardEvery); }
+  // candidatas a descarte: solo las descartables, ordenadas de peor (más puntos) a mejor
+  const discardable = all.filter(r=>!r.nd).sort((a,b)=>b.pts-a.pts);
+  const toDiscard = new Set(discardable.slice(0, nDiscards).map(r=>r.i));
+  const total = all.reduce((s,r)=> s + (toDiscard.has(r.i)?0:r.pts), 0);
+  return {total, discardedIdx:[...toDiscard], counted:n-toDiscard.size};
+}
 
 // ¿El barco tiene un rating utilizable para este modo de scoring?
 function hasValidRating(b, modeKey=DEFAULT_SCORING){
@@ -1150,31 +1195,49 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
 function ChampSyncBlock({state, setState}){
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState("");
+  const fileRef = useRef(null);
   const lastSync = state.champ?.orcLastSync;
 
-  const sync = async()=>{
-    if(!state.champ?.resultsUrl){ setMsg("⚠️ Añade la URL de resultados en Links del campeonato."); return; }
-    setSyncing(true); setMsg("Conectando con ORC...");
-    const data = await fetchOrcResults(state.champ.resultsUrl);
+  const applyResults = (data, sourceLabel)=>{
     if(data?.overallStandings?.length){
       setState(s=>({...s, champ:{...s.champ,
         orcStandings: data.overallStandings,
         orcRaces: data.races||[],
-        orcNumRaces: data.numRaces||0,
+        orcNumRaces: data.numRaces||data.overallStandings[0]?.breakdown?.length||0,
         name: data.eventName||s.champ.name,
         orcLastSync: Date.now()
       }}));
-      setMsg(`✓ ${data.numRaces||0} pruebas · ${data.overallStandings.length} barcos`);
-    } else {
-      setMsg("No se encontraron resultados. Verifica la URL de resultados.");
+      setMsg(`✓ ${data.numRaces||data.overallStandings[0]?.breakdown?.length||0} pruebas · ${data.overallStandings.length} barcos (${sourceLabel})`);
+      return true;
     }
+    return false;
+  };
+
+  const sync = async()=>{
+    if(!state.champ?.resultsUrl){ setMsg("⚠️ Añade la URL de resultados o sube una captura."); return; }
+    setSyncing(true); setMsg("Conectando con ORC...");
+    const data = await fetchOrcResults(state.champ.resultsUrl);
+    if(!applyResults(data, "web")) setMsg("No se encontraron resultados por URL. Prueba a subir una captura 📷");
     setSyncing(false);
+  };
+
+  const onPhoto = async(e)=>{
+    const file = e.target.files?.[0];
+    if(!file) return;
+    setSyncing(true); setMsg("📷 Leyendo la captura...");
+    try{
+      const b64 = await compressImage(file, 1400, 0.82); // más resolución para leer texto
+      const data = await extractResultsFromImage(b64, "image/jpeg");
+      if(!applyResults(data, "captura")) setMsg("No pude leer la tabla. Asegúrate de que la captura sea nítida y muestre N.Vela, pruebas y puntos.");
+    }catch(err){ setMsg("Error leyendo la imagen: "+err.message); }
+    setSyncing(false);
+    if(fileRef.current) fileRef.current.value="";
   };
 
   return(
     <Card st={{marginBottom:10}}>
       <Lbl v="🏆 Resultados oficiales ORC"/>
-      <div style={{display:"flex",gap:6,marginBottom:msg?6:0}}>
+      <div style={{display:"flex",gap:6,marginBottom:6}}>
         <button onClick={sync} disabled={syncing} style={{flex:1,padding:"10px 0",background:syncing?CARD2:ACC,color:"#fff",borderRadius:7,fontSize:12,fontWeight:700,border:"none",cursor:syncing?"default":"pointer"}}>
           {syncing?"⏳ Sincronizando...":"🔄 Sincronizar con ORC"}
         </button>
@@ -1185,9 +1248,17 @@ function ChampSyncBlock({state, setState}){
           </a>
         )}
       </div>
-      {msg&&<div style={{fontSize:10,color:msg.startsWith("✓")?GRN:msg.startsWith("⚠")?GLD:RED,lineHeight:1.4}}>{msg}</div>}
-      {lastSync&&<div style={{fontSize:9,color:T3,marginTop:4}}>Última sync: {new Date(lastSync).toLocaleTimeString("es-ES")}</div>}
-      {!state.champ?.resultsUrl&&<div style={{fontSize:9,color:T3,marginTop:4}}>Añade la URL de resultados en "Links del campeonato" ↑</div>}
+      {/* Subir captura de resultados */}
+      <button onClick={()=>fileRef.current?.click()} disabled={syncing}
+        style={{width:"100%",padding:"10px 0",background:syncing?CARD2:GRN,color:"#fff",borderRadius:7,fontSize:12,fontWeight:700,border:"none",cursor:syncing?"default":"pointer",marginBottom:msg?6:0}}>
+        📷 Subir captura de resultados
+      </button>
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onPhoto} style={{display:"none"}}/>
+      {msg&&<div style={{fontSize:10,color:msg.startsWith("✓")?GRN:msg.startsWith("⚠")?GLD:msg.startsWith("📷")?CYN:RED,lineHeight:1.4}}>{msg}</div>}
+      {lastSync&&<div style={{fontSize:9,color:T3,marginTop:4}}>Última actualización: {new Date(lastSync).toLocaleTimeString("es-ES")}</div>}
+      <div style={{fontSize:9,color:T3,marginTop:4,lineHeight:1.5}}>
+        La web del RCNB no permite lectura automática. Lo más fiable: abre los resultados (🔗), haz captura y súbela aquí 📷.
+      </div>
     </Card>
   );
 }
@@ -1764,6 +1835,25 @@ function TabConfig({state,setState,race}){
             </div>
             <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.5}}>
               Por defecto W/L ToT. Cada regata puede sobreescribirlo en 🏁 Regatas. ToT corrige por tiempo, ToD por distancia.
+            </div>
+          </Card>
+
+          <Card st={{marginBottom:10}}>
+            <Lbl v="Reglas de descarte"/>
+            <div style={{display:"flex",gap:10,marginTop:4,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:120}}>
+                <div style={{fontSize:9,color:T2,marginBottom:3}}>1 descarte cada (pruebas)</div>
+                <input type="number" min="0" max="20" value={state.champ?.discardEvery??4}
+                  onChange={e=>setState(s=>({...s,champ:{...s.champ,discardEvery:Math.max(0,parseInt(e.target.value)||0)}}))}/>
+              </div>
+              <div style={{flex:1,minWidth:120}}>
+                <div style={{fontSize:9,color:T2,marginBottom:3}}>Mínimo de pruebas</div>
+                <input type="number" min="1" max="20" value={state.champ?.discardMin??4}
+                  onChange={e=>setState(s=>({...s,champ:{...s.champ,discardMin:Math.max(1,parseInt(e.target.value)||1)}}))}/>
+              </div>
+            </div>
+            <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.5}}>
+              Ej.: "cada 4" descarta la peor a partir de 4 pruebas, 2 peores a partir de 8. Pon 0 para no descartar nunca. Marca pruebas concretas como "no descartable" en 🏁 Regatas.
             </div>
           </Card>
 
@@ -2603,25 +2693,40 @@ function TimingTable({passages, fleet, startTime, onAdjust, isEspectador, record
 function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state, activeRace, passages, startTime}){
   const [view, setView] = useState("prueba"); // "prueba" | "campeonato"
 
-  // Clasificación de campeonato en tiempo real
+  // Clasificación de campeonato en tiempo real CON descartes
   const champStandings = useMemo(()=>{
     const orcSt = state.champ?.orcStandings||[];
     if(!orcSt.length) return [];
     const racePos = {};
     standings.filter(s=>s.ct!=null).forEach((s,i)=>{ racePos[s.b?.id]=i+1; });
-    return orcSt.map(s=>{
+    const dEvery = state.champ?.discardEvery ?? 4;
+    const dMin   = state.champ?.discardMin ?? 4;
+    // marcas de no-descartables por índice de prueba (desde races, si existe)
+    const ndByIdx = (state.races||[]).map(r=>!!r.nonDiscardable);
+    const liveRunning = !!startTime;
+
+    const rows = orcSt.map(s=>{
       const fleetB = fleet.find(b=>
         b.sailNo===s.sailNo ||
         b.name?.toLowerCase()===s.boat?.toLowerCase() ||
         b.name?.toLowerCase().includes((s.boat||"").toLowerCase().split(" ").slice(-1)[0])
       );
+      // puntos por prueba oficiales (breakdown). Convertir "16 DNF" etc. a su número.
+      const breakdown = (s.breakdown||[]).map(p=>{
+        if(typeof p==="number") return p;
+        const m = String(p).match(/[\d.]+/); return m?Number(m[0]):0;
+      });
+      // prueba en curso (si la hay): posición provisional de este barco
       const rPos = fleetB ? racePos[fleetB.id] : null;
-      const prevPts = s.totalPts||0;
-      const curPts = rPos||0;
-      return {...s, fleetB, rPos, prevPts, curPts, totalEstim:prevPts+curPts};
-    }).sort((a,b)=>a.totalEstim-b.totalEstim);
+      const racesArr = breakdown.map((pts,i)=>({pts, nonDiscardable: ndByIdx[i]||false}));
+      if(liveRunning && rPos) racesArr.push({pts:rPos, nonDiscardable:false});
+      const { total, discardedIdx, counted } = applyDiscards(racesArr, dEvery, dMin);
+      return {...s, fleetB, rPos, breakdownNums:breakdown, livePts: (liveRunning&&rPos)||null,
+              total, discardedIdx, counted, racesArr};
+    }).sort((a,b)=>a.total-b.total);
+    return rows;
   // eslint-disable-next-line
-  },[state.champ?.orcStandings, standings, fleet]);
+  },[state.champ?.orcStandings, state.champ?.discardEvery, state.champ?.discardMin, state.races, standings, fleet, startTime]);
 
   const isOwn = b => b?.id===ownId||b?.sailNo===fleet.find(x=>x.id===ownId)?.sailNo;
 
@@ -2731,9 +2836,11 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
                       </td>
                       {(s.breakdown||[]).map((pts,i)=>{
                         const bad = String(pts).includes("DNC")||String(pts).includes("RET")||String(pts).includes("DSQ");
+                        const isDiscarded = (s.discardedIdx||[]).includes(i);
                         return(
                           <td key={i} style={{padding:"6px 4px",textAlign:"center",fontFamily:"monospace",
-                            fontSize:9,color:pts===1||pts==="1.00"?GRN:bad?RED:T2}}>
+                            fontSize:9,color:isDiscarded?T3:pts===1||pts==="1.00"?GRN:bad?RED:T2,
+                            textDecoration:isDiscarded?"line-through":"none",opacity:isDiscarded?0.6:1}}>
                             {pts}
                           </td>
                         );
@@ -2741,13 +2848,14 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
                       {startTime&&(
                         <td style={{padding:"6px 4px",textAlign:"center",fontFamily:"monospace",
                           fontWeight:800,fontSize:11,background:`${GRN}11`,
-                          color:s.rPos===1?GLD:s.rPos!=null?GRN:T3}}>
+                          color:s.rPos===1?GLD:s.rPos!=null?GRN:T3,
+                          textDecoration:(s.discardedIdx||[]).includes((s.breakdown||[]).length)?"line-through":"none"}}>
                           {s.rPos!=null ? s.rPos : "—"}
                         </td>
                       )}
                       <td style={{padding:"6px 6px",textAlign:"right",fontWeight:800,
                         fontFamily:"monospace",fontSize:12,color:isOwn?GLD:T1}}>
-                        {s.totalEstim||s.totalPts||"—"}
+                        {s.total ?? s.totalPts ?? "—"}
                       </td>
                     </tr>
                   );
@@ -2758,6 +2866,11 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
           {startTime&&<div style={{fontSize:9,color:T3,marginTop:5}}>
             * Posición actual en la prueba en curso — actualiza en tiempo real
           </div>}
+          {(state.champ?.discardEvery>0) && (champStandings[0]?.discardedIdx?.length>0) && (
+            <div style={{fontSize:9,color:T3,marginTop:4}}>
+              Pruebas <span style={{textDecoration:"line-through"}}>tachadas</span> = descartes aplicados (1 cada {state.champ.discardEvery} pruebas, desde {state.champ.discardMin}).
+            </div>
+          )}
         </>)}
       </>)}
     </div>
@@ -4010,6 +4123,15 @@ function TabRegatas({state, setState, race}){
                   ))}
                 </div>
               </div>
+
+              {/* No descartable */}
+              <button onClick={()=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,nonDiscardable:!r.nonDiscardable}:r)}))}
+                style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:CARD2,borderRadius:8,padding:"8px 10px",marginBottom:8,border:`1px solid ${race.nonDiscardable?GLD:BDR}`,cursor:"pointer"}}>
+                <span style={{fontSize:14}}>{race.nonDiscardable?"🔒":"⭕"}</span>
+                <span style={{fontSize:10,color:race.nonDiscardable?GLD:T2,fontWeight:700,textAlign:"left",flex:1}}>
+                  {race.nonDiscardable?"Prueba NO descartable":"Prueba descartable (normal)"}
+                </span>
+              </button>
               {!race.startTime&&(
                 <div>
                   <div style={{fontSize:10,color:T2,marginBottom:6}}>Cuenta atrás antes de la salida:</div>
@@ -4348,11 +4470,11 @@ export default function App(){
   },[currentId, state]);
 
   // Crear nuevo campeonato desde el wizard
-  const createChamp = useCallback(async({name, fleet, ownId, mainUrl="", resultsUrl="", docsUrl="", photosUrl="", entryListUrl="", scoringMode=DEFAULT_SCORING})=>{
+  const createChamp = useCallback(async({name, fleet, ownId, mainUrl="", resultsUrl="", docsUrl="", photosUrl="", entryListUrl="", scoringMode=DEFAULT_SCORING, discardEvery=4, discardMin=4})=>{
     const id = `champ_${Date.now()}`;
     const newState = {
       ...INIT, _champId:id,
-      champ:{name, ownId, mainUrl, resultsUrl, docsUrl, photosUrl, entryListUrl, scoringMode},
+      champ:{name, ownId, mainUrl, resultsUrl, docsUrl, photosUrl, entryListUrl, scoringMode, discardEvery, discardMin},
       fleet: fleet.map(b=>({...b})),
       races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],
       activeRaceId:"r1"
@@ -4392,7 +4514,7 @@ export default function App(){
   );
 
   const activeRace=state.races?.find(r=>r.id===state.activeRaceId);
-  const TABS=[{icon:"🏠",label:"Inicio"},{icon:"⚙️",label:"Config"},{icon:"🚩",label:"En Vivo"},{icon:"📋",label:"Tablas"},{icon:"📊",label:"Result."},{icon:"🏁",label:"Regatas"}];
+  const TABS=[{icon:"🏠",label:"Inicio"},{icon:"🏁",label:"Regatas"},{icon:"🚩",label:"En Vivo"},{icon:"📋",label:"Tablas"},{icon:"📊",label:"Result."},{icon:"⚙️",label:"Config"}];
 
   return(
     <ErrorBoundary>
@@ -4477,11 +4599,11 @@ export default function App(){
               };
             });
           }}/> }
-          {tab===1&&<TabConfig state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
+          {tab===1&&<TabRegatas state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
           {tab===2&&<TabEnVivo state={state} setState={wrappedSetState} role={role}/>}
           {tab===3&&<TabTablas state={state} race={activeRace}/>}
           {tab===4&&<TabResultados state={state} setState={wrappedSetState}/>}
-          {tab===5&&<TabRegatas state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
+          {tab===5&&<TabConfig state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
         </div>
         <div style={{display:"flex",background:CARD,borderTop:`1px solid ${BDR}`,flexShrink:0}}>
           {TABS.map(({icon,label},i)=>(
