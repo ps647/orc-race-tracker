@@ -71,6 +71,12 @@ const loadIdx = async ()=> lsGet(IDX_KEY)||[];
 // saveCh/loadCh delegan en la nube si está configurada; si no, localStorage.
 const saveCh  = async (id,s) => { lsSet(chKey(id), s); try{ await cloud.saveChampionship(id, s); }catch(e){ console.error("cloud save:",e); } };
 const loadCh  = async id => { try{ const r=await cloud.loadChampionship(id); if(r) return r; }catch{} return lsGet(chKey(id)); };
+// deleteCh: borra el campeonato. cloud.deleteChampionship lee el _cloudId
+// y borra tanto la nube como la entrada local (en ese orden).
+const deleteCh = async id => {
+  try{ await cloud.deleteChampionship(id); }
+  catch(e){ console.error("delete:",e); try{ localStorage.removeItem(chKey(id)); }catch{} }
+};
 
 // Base de datos compartida — window.storage (shared) para artifact, localStorage como fallback
 const loadPhotoDb = async()=>{
