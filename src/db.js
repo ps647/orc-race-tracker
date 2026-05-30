@@ -80,9 +80,10 @@ export async function saveChampionship(localId, state) {
   try {
     const sb = getClient();
     const { id: champId, joinCode } = await upsertChampionship(sb, state);
-    await upsertBoats(sb, champId, state.fleet || []);
-    await upsertRaces(sb, champId, state.races || []);
-    await upsertPassages(sb, champId, state.races || []);
+    // Cada paso protegido: si boats/races/passages falla, no perdemos el código.
+    try { await upsertBoats(sb, champId, state.fleet || []); } catch(e){ console.error("upsertBoats:", e.message); }
+    try { await upsertRaces(sb, champId, state.races || []); } catch(e){ console.error("upsertRaces:", e.message); }
+    try { await upsertPassages(sb, champId, state.races || []); } catch(e){ console.error("upsertPassages:", e.message); }
     // Cache local CON el cloudId y el joinCode, para que el código persista
     lsSet(chKey(localId), { ...state, _cloudId: champId, champ: { ...state.champ, joinCode } });
     return { ok: true, cloudId: champId, joinCode };
@@ -118,6 +119,16 @@ export async function loadChampionship(localId) {
 // Índice de campeonatos (lista de la pantalla inicial).
 export async function saveIndex(arr) { lsSet(IDX_KEY, arr); }
 export async function loadIndex() { return lsGet(IDX_KEY) || []; }
+
+// Listar campeonatos existentes en la nube (para recuperar código tras recargar).
+export async function listChampionships() {
+  if (!isCloudEnabled()) return [];
+  try {
+    const sb = getClient();
+    const { data } = await sb.from("championships").select("id,join_code,name,updated_at").order("updated_at", { ascending: false }).limit(20);
+    return data || [];
+  } catch { return []; }
+}
 
 // Borrar un campeonato de la nube (cascade borra boats/races/passages por la FK).
 export async function deleteChampionship(localId) {
@@ -166,8 +177,16 @@ export function subscribe(cloudId, onChange) {
 // ============================================================================
 
 async function upsertChampionship(sb, state) {
-  const existingId = lsGet(chKey(state._champId))?._cloudId;
+  let existingId = lsGet(chKey(state._champId))?._cloudId;
   const joinCode = (state.champ.joinCode || makeJoinCode(state.champ.name)).toUpperCase();
+
+  // Si no tenemos cloudId en local pero sí un joinCode, buscar el registro existente
+  // en la nube (evita crear duplicados al "recuperar código" tras recargar).
+  if (!existingId && state.champ.joinCode) {
+    const { data: found } = await sb.from("championships").select("id").eq("join_code", joinCode).maybeSingle();
+    if (found?.id) existingId = found.id;
+  }
+
   const row = {
     join_code: joinCode,
     name: state.champ.name,
@@ -177,7 +196,6 @@ async function upsertChampionship(sb, state) {
     updated_at: new Date().toISOString(),
   };
   if (existingId) {
-    // Recuperar el join_code real ya guardado (no sobreescribir con uno nuevo)
     const { data: cur } = await sb.from("championships").select("join_code").eq("id", existingId).maybeSingle();
     const finalCode = cur?.join_code || joinCode;
     await sb.from("championships").update({ ...row, join_code: finalCode }).eq("id", existingId);
