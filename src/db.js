@@ -18,6 +18,7 @@ import { createClient } from "@supabase/supabase-js";
 // ── localStorage helpers (fallback) ─────────────────────────────────────────
 const lsGet = k => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const lsRemove = k => { try { localStorage.removeItem(k); } catch {} };
 
 const SK = "orc-v7", IDX_KEY = "orc-champs-idx";
 const chKey = id => `orc-ch-${id}`;
@@ -116,6 +117,18 @@ export async function loadChampionship(localId) {
 // Índice de campeonatos (lista de la pantalla inicial).
 export async function saveIndex(arr) { lsSet(IDX_KEY, arr); }
 export async function loadIndex() { return lsGet(IDX_KEY) || []; }
+
+// Borrar un campeonato de la nube (cascade borra boats/races/passages por la FK).
+export async function deleteChampionship(localId) {
+  const cloudId = lsGet(chKey(localId))?._cloudId;  // leer ANTES de borrar local
+  lsRemove(chKey(localId));
+  if (!isCloudEnabled() || !cloudId) return { ok: true, local: true };
+  try {
+    const sb = getClient();
+    const { error } = await sb.from("championships").delete().eq("id", cloudId);
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
 
 // Registrar UN paso de baliza (append-only, dedup en servidor).
 export async function recordPassage(state, { raceLocalId, boatSailNo, leg, realTime }) {
