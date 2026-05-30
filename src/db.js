@@ -79,12 +79,13 @@ export async function saveChampionship(localId, state) {
   if (!isCloudEnabled()) { lsSet(chKey(localId), state); return { ok: true, local: true }; }
   try {
     const sb = getClient();
-    const champId = await upsertChampionship(sb, state);
+    const { id: champId, joinCode } = await upsertChampionship(sb, state);
     await upsertBoats(sb, champId, state.fleet || []);
     await upsertRaces(sb, champId, state.races || []);
     await upsertPassages(sb, champId, state.races || []);
-    lsSet(chKey(localId), { ...state, _cloudId: champId }); // cache local
-    return { ok: true, cloudId: champId };
+    // Cache local CON el cloudId y el joinCode, para que el código persista
+    lsSet(chKey(localId), { ...state, _cloudId: champId, champ: { ...state.champ, joinCode } });
+    return { ok: true, cloudId: champId, joinCode };
   } catch (e) {
     console.error("saveChampionship cloud error, fallback local:", e);
     lsSet(chKey(localId), state);
@@ -166,8 +167,9 @@ export function subscribe(cloudId, onChange) {
 
 async function upsertChampionship(sb, state) {
   const existingId = lsGet(chKey(state._champId))?._cloudId;
+  const joinCode = (state.champ.joinCode || makeJoinCode(state.champ.name)).toUpperCase();
   const row = {
-    join_code: (state.champ.joinCode || makeJoinCode(state.champ.name)).toUpperCase(),
+    join_code: joinCode,
     name: state.champ.name,
     scoring_mode: state.champ.scoringMode || "WL_ToT",
     own_sail_no: state.fleet?.find(b => b.id === state.champ.ownId)?.sailNo || null,
@@ -175,12 +177,15 @@ async function upsertChampionship(sb, state) {
     updated_at: new Date().toISOString(),
   };
   if (existingId) {
-    await sb.from("championships").update(row).eq("id", existingId);
-    return existingId;
+    // Recuperar el join_code real ya guardado (no sobreescribir con uno nuevo)
+    const { data: cur } = await sb.from("championships").select("join_code").eq("id", existingId).maybeSingle();
+    const finalCode = cur?.join_code || joinCode;
+    await sb.from("championships").update({ ...row, join_code: finalCode }).eq("id", existingId);
+    return { id: existingId, joinCode: finalCode };
   }
-  const { data, error } = await sb.from("championships").insert(row).select("id").single();
+  const { data, error } = await sb.from("championships").insert(row).select("id,join_code").single();
   if (error) throw error;
-  return data.id;
+  return { id: data.id, joinCode: data.join_code };
 }
 
 async function upsertBoats(sb, champId, fleet) {
