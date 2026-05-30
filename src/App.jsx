@@ -1853,8 +1853,32 @@ function TabConfig({state,setState,race}){
               </div>
             </div>
             <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.5}}>
-              Ej.: "cada 4" descarta la peor a partir de 4 pruebas, 2 peores a partir de 8. Pon 0 para no descartar nunca. Marca pruebas concretas como "no descartable" en 🏁 Regatas.
+              Ej.: "cada 4" descarta la peor a partir de 4 pruebas, 2 peores a partir de 8. Pon 0 para no descartar nunca.
             </div>
+            {(() => {
+              const nR = state.champ?.orcStandings?.[0]?.breakdown?.length || 0;
+              if(!nR) return <div style={{fontSize:9,color:T3,marginTop:8}}>Carga los resultados oficiales para marcar pruebas como no descartables.</div>;
+              const nd = state.champ?.ndRaces || [];
+              const toggle = i => setState(s=>{
+                const cur = s.champ?.ndRaces||[];
+                const next = cur.includes(i) ? cur.filter(x=>x!==i) : [...cur, i];
+                return {...s, champ:{...s.champ, ndRaces:next}};
+              });
+              return (
+                <div style={{marginTop:10}}>
+                  <div style={{fontSize:9,color:T2,marginBottom:5,fontWeight:700}}>Pruebas NO descartables (oficiales):</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {Array.from({length:nR}).map((_,i)=>(
+                      <button key={i} onClick={()=>toggle(i)}
+                        style={{padding:"5px 11px",borderRadius:16,fontSize:11,fontWeight:700,cursor:"pointer",
+                          background:nd.includes(i)?GLD:CARD,color:nd.includes(i)?"#000":T2,border:`1px solid ${nd.includes(i)?GLD:BDR}`}}>
+                        {nd.includes(i)?"🔒 ":""}R{i+1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </Card>
 
           <ChampLinks state={state} setState={setState}/>
@@ -2701,8 +2725,8 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
     standings.filter(s=>s.ct!=null).forEach((s,i)=>{ racePos[s.b?.id]=i+1; });
     const dEvery = state.champ?.discardEvery ?? 4;
     const dMin   = state.champ?.discardMin ?? 4;
-    // marcas de no-descartables por índice de prueba (desde races, si existe)
-    const ndByIdx = (state.races||[]).map(r=>!!r.nonDiscardable);
+    // no-descartables: marcadas a nivel campeonato por índice de prueba oficial
+    const ndOfficial = state.champ?.ndRaces || [];
     const liveRunning = !!startTime;
 
     const rows = orcSt.map(s=>{
@@ -2718,7 +2742,7 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
       });
       // prueba en curso (si la hay): posición provisional de este barco
       const rPos = fleetB ? racePos[fleetB.id] : null;
-      const racesArr = breakdown.map((pts,i)=>({pts, nonDiscardable: ndByIdx[i]||false}));
+      const racesArr = breakdown.map((pts,i)=>({pts, nonDiscardable: ndOfficial.includes(i)}));
       if(liveRunning && rPos) racesArr.push({pts:rPos, nonDiscardable:false});
       const { total, discardedIdx, counted } = applyDiscards(racesArr, dEvery, dMin);
       return {...s, fleetB, rPos, breakdownNums:breakdown, livePts: (liveRunning&&rPos)||null,
@@ -2726,7 +2750,7 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
     }).sort((a,b)=>a.total-b.total);
     return rows;
   // eslint-disable-next-line
-  },[state.champ?.orcStandings, state.champ?.discardEvery, state.champ?.discardMin, state.races, standings, fleet, startTime]);
+  },[state.champ?.orcStandings, state.champ?.discardEvery, state.champ?.discardMin, state.champ?.ndRaces, state.races, standings, fleet, startTime]);
 
   const isOwn = b => b?.id===ownId||b?.sailNo===fleet.find(x=>x.id===ownId)?.sailNo;
 
@@ -2830,9 +2854,9 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
                       <td style={{padding:"6px 3px",textAlign:"center",fontSize:8,color:T2,fontWeight:600}}>
                         {s.nation||"—"}
                       </td>
-                      <td style={{padding:"6px 6px",fontWeight:isOwn?800:500,color:isOwn?GLD:"#fff",
+                      <td style={{padding:"6px 6px",fontWeight:isOwn?800:500,color:isOwn?GLD:T1,
                         whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:110}}>
-                        {s.boat}{isOwn?" ⭐":""}
+                        {s.boat||s.sailNo||"—"}{isOwn?" ⭐":""}
                       </td>
                       {(s.breakdown||[]).map((pts,i)=>{
                         const bad = String(pts).includes("DNC")||String(pts).includes("RET")||String(pts).includes("DSQ");
@@ -4123,15 +4147,6 @@ function TabRegatas({state, setState, race}){
                   ))}
                 </div>
               </div>
-
-              {/* No descartable */}
-              <button onClick={()=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,nonDiscardable:!r.nonDiscardable}:r)}))}
-                style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:CARD2,borderRadius:8,padding:"8px 10px",marginBottom:8,border:`1px solid ${race.nonDiscardable?GLD:BDR}`,cursor:"pointer"}}>
-                <span style={{fontSize:14}}>{race.nonDiscardable?"🔒":"⭕"}</span>
-                <span style={{fontSize:10,color:race.nonDiscardable?GLD:T2,fontWeight:700,textAlign:"left",flex:1}}>
-                  {race.nonDiscardable?"Prueba NO descartable":"Prueba descartable (normal)"}
-                </span>
-              </button>
               {!race.startTime&&(
                 <div>
                   <div style={{fontSize:10,color:T2,marginBottom:6}}>Cuenta atrás antes de la salida:</div>
@@ -4182,8 +4197,19 @@ function TabRegatas({state, setState, race}){
                     {!isActive&&<button onClick={()=>setState(s=>({...s,activeRaceId:r.id}))}
                       style={{padding:"4px 8px",borderRadius:5,background:ACC,color:"#fff",fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>Activar</button>}
                     <button onClick={()=>setState(s=>({...s,races:s.races.map(x=>x.id===r.id?{...x,discarded:!x.discarded}:x)}))}
-                      style={{padding:"4px 8px",borderRadius:5,background:r.discarded?`${GRN}22`:`${RED}18`,color:r.discarded?GRN:RED,fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>
-                      {r.discarded?"↩":"🗑"}
+                      title={r.discarded?"Recuperar":"Descartar"}
+                      style={{padding:"4px 8px",borderRadius:5,background:r.discarded?`${GRN}22`:`${GLD}22`,color:r.discarded?GRN:GLD,fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>
+                      {r.discarded?"↩":"⊘"}
+                    </button>
+                    <button onClick={()=>setConfirm2({msg:`¿Eliminar "${r.name}" definitivamente?`,onOk:()=>setState(s=>{
+                        const rem=s.races.filter(x=>x.id!==r.id);
+                        const races=rem.length?rem:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:s.races[0]?.course||DCOURSE,discarded:false}];
+                        const activeRaceId = s.activeRaceId===r.id ? races[0].id : s.activeRaceId;
+                        return{...s,races,activeRaceId};
+                      })})}
+                      title="Eliminar prueba"
+                      style={{padding:"4px 8px",borderRadius:5,background:`${RED}18`,color:RED,fontSize:11,fontWeight:700,border:"none",cursor:"pointer"}}>
+                      🗑
                     </button>
                   </div>
                 </div>
