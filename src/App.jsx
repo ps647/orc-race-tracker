@@ -69,7 +69,7 @@ const loadS   = async ()=> lsGet(SK);
 const saveIdx = async arr => { lsSet(IDX_KEY, arr); try{ await cloud.saveIndex(arr); }catch{} };
 const loadIdx = async ()=> lsGet(IDX_KEY)||[];
 // saveCh/loadCh delegan en la nube si está configurada; si no, localStorage.
-const saveCh  = async (id,s) => { lsSet(chKey(id), s); try{ await cloud.saveChampionship(id, s); }catch(e){ console.error("cloud save:",e); } };
+const saveCh  = async (id,s) => { lsSet(chKey(id), s); try{ return await cloud.saveChampionship(id, s); }catch(e){ console.error("cloud save:",e); return {ok:false,error:e.message}; } };
 const loadCh  = async id => { try{ const r=await cloud.loadChampionship(id); if(r) return r; }catch{} return lsGet(chKey(id)); };
 // deleteCh: borra el campeonato. cloud.deleteChampionship lee el _cloudId
 // y borra tanto la nube como la entrada local (en ese orden).
@@ -1791,15 +1791,20 @@ function CloudSyncBlock({state, setState}){
   const code = state?.champ?.joinCode;
 
   const connect = async()=>{
-    if(!url.trim()||!key.trim()){ setMsg("❌ Faltan URL y anon key"); return; }
+    if(!url.trim()||!key.trim()){ setMsg("❌ Faltan URL y clave (publishable key)"); return; }
     setBusy(true); setMsg("⏳ Conectando...");
     try{
       cloud.configureCloud(url.trim(), key.trim());
-      // Forzar una primera subida del campeonato actual para crear el código
-      await saveCh(state._champId, {...state, _champId:state._champId});
-      const fresh = await loadCh(state._champId);
-      if(fresh?.champ?.joinCode) setState(s=>({...s, champ:{...s.champ, joinCode:fresh.champ.joinCode}, _cloudId:fresh._cloudId}));
-      setMsg("✅ Conectado. Comparte el código de campeonato.");
+      // Subir el campeonato; saveChampionship devuelve el joinCode y el cloudId
+      const res = await saveCh(state._champId, {...state, _champId:state._champId});
+      if(res?.joinCode){
+        setState(s=>({...s, champ:{...s.champ, joinCode:res.joinCode}, _cloudId:res.cloudId}));
+        setMsg("✅ Conectado. Comparte el código de campeonato.");
+      } else if(res?.error){
+        setMsg("❌ "+res.error);
+      } else {
+        setMsg("✅ Conectado.");
+      }
     }catch(e){ setMsg("❌ "+e.message); }
     setBusy(false);
   };
@@ -1829,13 +1834,23 @@ function CloudSyncBlock({state, setState}){
         <div style={{background:`${GRN}12`,border:`1px solid ${GRN}40`,borderRadius:9,padding:"10px 12px",marginBottom:10,textAlign:"center"}}>
           <div style={{fontSize:9,color:T2,marginBottom:3}}>CÓDIGO DE CAMPEONATO (compártelo)</div>
           <div style={{fontSize:24,fontWeight:900,letterSpacing:3,color:GRN,fontFamily:"monospace"}}>{code}</div>
+          <button onClick={()=>{ try{ navigator.clipboard?.writeText(code); setMsg("✅ Código copiado: "+code); }catch{} }}
+            style={{marginTop:6,padding:"4px 12px",background:`${GRN}22`,color:GRN,border:`1px solid ${GRN}55`,borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer"}}>📋 Copiar código</button>
+        </div>
+      )}
+
+      {enabled && !code && (
+        <div style={{background:`${GLD}12`,border:`1px solid ${GLD}40`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
+          <div style={{fontSize:10,color:GLD,fontWeight:700,marginBottom:6}}>El código no está cargado en este dispositivo</div>
+          <div style={{fontSize:9,color:T2,marginBottom:8,lineHeight:1.5}}>Pulsa para recuperarlo desde la nube (vuelve a subir y leer el campeonato).</div>
+          <Btn v={busy?"⏳...":"🔄 Recuperar código"} onClick={connect} c="gld" fw dis={busy}/>
         </div>
       )}
 
       {!enabled && (
         <div style={{display:"grid",gap:6,marginBottom:8}}>
           <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://xxxx.supabase.co"/>
-          <input value={key} onChange={e=>setKey(e.target.value)} placeholder="anon public key" type="password"/>
+          <input value={key} onChange={e=>setKey(e.target.value)} placeholder="publishable key (sb_publishable_...)" type="password"/>
           <Btn v={busy?"⏳...":"🔌 Conectar Supabase"} onClick={connect} c="cyn" fw dis={busy}/>
         </div>
       )}
