@@ -1787,8 +1787,30 @@ function CloudSyncBlock({state, setState}){
   const [msg, setMsg]   = useState("");
   const [busy, setBusy] = useState(false);
   const [joinCode, setJoinCode] = useState("");
+  const [cloudList, setCloudList] = useState(null);
   const enabled = cloud.isCloudEnabled();
   const code = state?.champ?.joinCode;
+
+  const recoverFromCloud = async()=>{
+    setBusy(true); setMsg("⏳ Buscando campeonatos en la nube...");
+    try{
+      const list = await cloud.listChampionships();
+      if(!list.length){ setMsg("❌ No hay campeonatos en la nube todavía"); setBusy(false); return; }
+      setCloudList(list);
+      setMsg("");
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+  };
+
+  const linkToCloud = async(champRow)=>{
+    setBusy(true); setMsg("⏳ Vinculando...");
+    try{
+      setState(s=>({...s, champ:{...s.champ, joinCode:champRow.join_code}, _cloudId:champRow.id}));
+      setCloudList(null);
+      setMsg("✅ Código recuperado: "+champRow.join_code);
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+  };
 
   const connect = async()=>{
     if(!url.trim()||!key.trim()){ setMsg("❌ Faltan URL y clave (publishable key)"); return; }
@@ -1842,8 +1864,23 @@ function CloudSyncBlock({state, setState}){
       {enabled && !code && (
         <div style={{background:`${GLD}12`,border:`1px solid ${GLD}40`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
           <div style={{fontSize:10,color:GLD,fontWeight:700,marginBottom:6}}>El código no está cargado en este dispositivo</div>
-          <div style={{fontSize:9,color:T2,marginBottom:8,lineHeight:1.5}}>Pulsa para recuperarlo desde la nube (vuelve a subir y leer el campeonato).</div>
-          <Btn v={busy?"⏳...":"🔄 Recuperar código"} onClick={connect} c="gld" fw dis={busy}/>
+          {!cloudList && (
+            <>
+              <div style={{fontSize:9,color:T2,marginBottom:8,lineHeight:1.5}}>Recupéralo desde la nube: busca tus campeonatos guardados y elige el correcto.</div>
+              <Btn v={busy?"⏳...":"🔄 Buscar mi código en la nube"} onClick={recoverFromCloud} c="gld" fw dis={busy}/>
+            </>
+          )}
+          {cloudList && (
+            <div style={{display:"grid",gap:5}}>
+              <div style={{fontSize:9,color:T2,marginBottom:2}}>Elige tu campeonato:</div>
+              {cloudList.map(c=>(
+                <button key={c.id} onClick={()=>linkToCloud(c)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",background:CARD2,border:`1px solid ${BDR}`,borderRadius:7,cursor:"pointer",textAlign:"left"}}>
+                  <span style={{fontSize:11,color:T1,fontWeight:600}}>{c.name}</span>
+                  <span style={{fontSize:13,color:GRN,fontFamily:"monospace",fontWeight:800,letterSpacing:1}}>{c.join_code}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
