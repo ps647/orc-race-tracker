@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import * as cloud from "./db.js";
 
 // ── ERROR BOUNDARY — muestra el error real en lugar de pantalla en blanco ──
 class ErrorBoundary extends React.Component {
@@ -16,8 +17,9 @@ class ErrorBoundary extends React.Component {
         this.setState({ err: null });
       };
       return React.createElement("div", {
-        style: { padding:20, background:BG, minHeight:"100vh", color:"#fff", fontFamily:"system-ui" }
+        style: { padding:20, background:BG, minHeight:"100vh", color:T1, fontFamily:"system-ui" }
       },
+        React.createElement("style", null, CSS),
         React.createElement("div", { style:{fontSize:36,marginBottom:12,textAlign:"center"} }, "⚠️"),
         React.createElement("h3", { style:{color:"#ef4444",marginBottom:8,textAlign:"center"} }, "Error en ORC Tracker"),
         React.createElement("pre", { style:{fontSize:10,whiteSpace:"pre-wrap",background:"#111",padding:12,borderRadius:8,color:"#fca5a5",marginBottom:16,overflowX:"auto"} }, this.state.err),
@@ -64,10 +66,11 @@ const lsSet = (k,v)=>{ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{} 
 
 const saveS   = async s => lsSet(SK, s);
 const loadS   = async ()=> lsGet(SK);
-const saveIdx = async arr => lsSet(IDX_KEY, arr);
+const saveIdx = async arr => { lsSet(IDX_KEY, arr); try{ await cloud.saveIndex(arr); }catch{} };
 const loadIdx = async ()=> lsGet(IDX_KEY)||[];
-const saveCh  = async (id,s) => lsSet(chKey(id), s);
-const loadCh  = async id => lsGet(chKey(id));
+// saveCh/loadCh delegan en la nube si está configurada; si no, localStorage.
+const saveCh  = async (id,s) => { lsSet(chKey(id), s); try{ await cloud.saveChampionship(id, s); }catch(e){ console.error("cloud save:",e); } };
+const loadCh  = async id => { try{ const r=await cloud.loadChampionship(id); if(r) return r; }catch{} return lsGet(chKey(id)); };
 
 // Base de datos compartida — window.storage (shared) para artifact, localStorage como fallback
 const loadPhotoDb = async()=>{
@@ -283,7 +286,9 @@ const LEG_DEF=[
   {n:6,mark:"Llegada",  type:"run",  label:"Empopada→Fin",col:"#0891b2"},
 ];
 
-const BG="#070d18",CARD="#0d1826",CARD2="#111f2e",BDR="#1a3050";
+// ── TEMA: los tokens son CSS variables, así un único cambio de :root cambia
+// toda la app sin tocar los cientos de usos de ${CARD}, ${T2}, etc. ───────────
+const BG="var(--bg)",CARD="var(--card)",CARD2="var(--card2)",BDR="var(--bdr)";
 
 // Detectar entorno: artifact de Claude (iframe) vs Vercel (standalone)
 const IS_ARTIFACT = typeof window!=="undefined" && window.self!==window.top;
@@ -291,9 +296,22 @@ const CLAUDE_API  = IS_ARTIFACT
   ? CLAUDE_API
   : "/api/claude";
 
-const T1="#e8eef4",T2="#5a7a96",T3="#1e3a5f";
-const ACC="#2563eb",GRN="#059669",RED="#dc2626",GLD="#d97706",CYN="#0891b2",PRP="#7c3aed";
-const CSS=`*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}body,#root{background:${BG};color:${T1};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;height:100vh;overflow:hidden}input,select{width:100%;color:${T1};background:${CARD2};border:1px solid ${BDR};border-radius:8px;padding:8px 10px;font-size:13px;outline:none}input:focus,select:focus{border-color:${ACC}}button{cursor:pointer;border:none;outline:none}button:active{transform:scale(.95)}::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:${BDR}}@keyframes pop{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}.pop{animation:pop .18s ease}`;
+const T1="var(--t1)",T2="var(--t2)",T3="var(--t3)";
+const ACC="var(--acc)",GRN="var(--grn)",RED="var(--red)",GLD="var(--gld)",CYN="var(--cyn)",PRP="var(--prp)";
+
+// Paletas. El interruptor de tema pone data-theme="light" en <html>.
+const THEME_VARS = `
+:root{
+  --bg:#070d18; --card:#0d1826; --card2:#111f2e; --bdr:#1a3050;
+  --t1:#e8eef4; --t2:#90abc4; --t3:#5a7a96;
+  --acc:#3b82f6; --grn:#10b981; --red:#ef4444; --gld:#f59e0b; --cyn:#22b8cf; --prp:#a78bfa;
+}
+[data-theme="light"]{
+  --bg:#f2f5f9; --card:#ffffff; --card2:#eef2f7; --bdr:#d3dde8;
+  --t1:#0f1d2e; --t2:#3d5573; --t3:#7089a3;
+  --acc:#1d4ed8; --grn:#047857; --red:#dc2626; --gld:#b45309; --cyn:#0e7490; --prp:#6d28d9;
+}`;
+const CSS=THEME_VARS+`*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}body,#root{background:${BG};color:${T1};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;height:100vh;overflow:hidden;transition:background .2s,color .2s}input,select{width:100%;color:${T1};background:${CARD2};border:1px solid ${BDR};border-radius:8px;padding:8px 10px;font-size:13px;outline:none}input:focus,select:focus{border-color:${ACC}}button{cursor:pointer;border:none;outline:none}button:active{transform:scale(.95)}::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:${BDR}}@keyframes pop{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}.pop{animation:pop .18s ease}`;
 
 function ft(s,plus=false){if(s==null||isNaN(s))return"--:--";const g=s<0?"-":(plus&&s>0?"+":"");const a=Math.abs(Math.round(s));const h=Math.floor(a/3600),m=Math.floor((a%3600)/60),sc=a%60;return h>0?`${g}${h}:${String(m).padStart(2,"0")}:${String(sc).padStart(2,"0")}`:`${g}${String(m).padStart(2,"0")}:${String(sc).padStart(2,"0")}`;}
 
@@ -913,7 +931,7 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
             <div style={{width:28,height:28,borderRadius:6,background:b.hullColor||b.color,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <span style={{fontSize:13,fontWeight:900,color:textColor}}>{b.bowNum||"?"}</span>
             </div>
-            <div style={{fontSize:13,fontWeight:700,color:isOwn?b.color:"#fff",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+            <div style={{fontSize:13,fontWeight:700,color:isOwn?b.color:T1,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
               {b.name}{isOwn?" ⭐":""}
             </div>
           </div>
@@ -1745,12 +1763,91 @@ function TabConfig({state,setState,race}){
 
           <ChampLinks state={state} setState={setState}/>
 
+          {/* Sincronización en la nube (Supabase) */}
+          <CloudSyncBlock state={state} setState={setState}/>
+
           {/* Sincronizar resultados ORC */}
           <ChampSyncBlock state={state} setState={setState}/>
         </>)}
 
       </div>
     </div>
+  );
+}
+
+function CloudSyncBlock({state, setState}){
+  const [url, setUrl]   = useState(()=>{ try{ return (JSON.parse(localStorage.getItem("orc-cloud-cfg")||"{}")).url||""; }catch{ return ""; }});
+  const [key, setKey]   = useState(()=>{ try{ return (JSON.parse(localStorage.getItem("orc-cloud-cfg")||"{}")).key||""; }catch{ return ""; }});
+  const [msg, setMsg]   = useState("");
+  const [busy, setBusy] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const enabled = cloud.isCloudEnabled();
+  const code = state?.champ?.joinCode;
+
+  const connect = async()=>{
+    if(!url.trim()||!key.trim()){ setMsg("❌ Faltan URL y anon key"); return; }
+    setBusy(true); setMsg("⏳ Conectando...");
+    try{
+      cloud.configureCloud(url.trim(), key.trim());
+      // Forzar una primera subida del campeonato actual para crear el código
+      await saveCh(state._champId, {...state, _champId:state._champId});
+      const fresh = await loadCh(state._champId);
+      if(fresh?.champ?.joinCode) setState(s=>({...s, champ:{...s.champ, joinCode:fresh.champ.joinCode}, _cloudId:fresh._cloudId}));
+      setMsg("✅ Conectado. Comparte el código de campeonato.");
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+  };
+
+  const join = async()=>{
+    if(!joinCode.trim()) return;
+    setBusy(true); setMsg("⏳ Buscando campeonato...");
+    try{
+      const loaded = await cloud.loadByCode(joinCode.trim().toUpperCase());
+      if(!loaded){ setMsg("❌ No existe un campeonato con ese código"); setBusy(false); return; }
+      setState(loaded);
+      setMsg(`✅ Entraste en "${loaded.champ.name}"`);
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Card st={{marginBottom:10}}>
+      <Lbl v="☁️ Sincronización en la nube"/>
+      <div style={{fontSize:10,color:T2,lineHeight:1.6,marginBottom:8}}>
+        {enabled
+          ? <>Conectado a Supabase. Los cambios se ven en tiempo real en todos los dispositivos.</>
+          : <>Sin conectar: los datos solo se guardan en este dispositivo. Pega tu URL y anon key de Supabase (Project Settings → API).</>}
+      </div>
+
+      {enabled && code && (
+        <div style={{background:`${GRN}12`,border:`1px solid ${GRN}40`,borderRadius:9,padding:"10px 12px",marginBottom:10,textAlign:"center"}}>
+          <div style={{fontSize:9,color:T2,marginBottom:3}}>CÓDIGO DE CAMPEONATO (compártelo)</div>
+          <div style={{fontSize:24,fontWeight:900,letterSpacing:3,color:GRN,fontFamily:"monospace"}}>{code}</div>
+        </div>
+      )}
+
+      {!enabled && (
+        <div style={{display:"grid",gap:6,marginBottom:8}}>
+          <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://xxxx.supabase.co"/>
+          <input value={key} onChange={e=>setKey(e.target.value)} placeholder="anon public key" type="password"/>
+          <Btn v={busy?"⏳...":"🔌 Conectar Supabase"} onClick={connect} c="cyn" fw dis={busy}/>
+        </div>
+      )}
+
+      {enabled && (
+        <div style={{borderTop:`1px solid ${BDR}`,marginTop:8,paddingTop:8}}>
+          <Lbl v="Entrar en otro campeonato con código"/>
+          <div style={{display:"flex",gap:6}}>
+            <input value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase())} placeholder="EJ. GODO26" style={{textTransform:"uppercase",fontFamily:"monospace",fontWeight:700}}/>
+            <Btn v="Entrar" onClick={join} c="acc" dis={busy||!joinCode.trim()}/>
+          </div>
+        </div>
+      )}
+
+      {msg && <div style={{marginTop:8,fontSize:10,padding:"6px 9px",borderRadius:7,
+        background: msg.startsWith("✅")?`${GRN}15`:msg.startsWith("❌")?`${RED}15`:`${CYN}15`,
+        color: msg.startsWith("✅")?GRN:msg.startsWith("❌")?RED:CYN}}>{msg}</div>}
+    </Card>
   );
 }
 
@@ -1994,7 +2091,7 @@ function TabEnVivo({state,setState,role="patron"}){
                   {pend.boat.bowNum||"?"}
                 </span>
               </div>
-              <div style={{fontSize:22,fontWeight:800,color:"#fff",marginBottom:4,textAlign:"center"}}>{pend.boat.name}</div>
+              <div style={{fontSize:22,fontWeight:800,color:T1,marginBottom:4,textAlign:"center"}}>{pend.boat.name}</div>
               <div style={{fontSize:13,color:T2,marginBottom:4}}>{pend.boat.sailNo}</div>
               <div style={{fontSize:13,color:LEG_DEF[boatLeg(pend.boat.id)]?.col||GLD,fontWeight:700,marginBottom:24}}>
                 → {LEG_DEF[boatLeg(pend.boat.id)]?.mark||"FIN"}
@@ -2498,7 +2595,7 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
               <span style={{fontFamily:"monospace",fontSize:14,fontWeight:800,width:24,color:i===0&&hasTime?GLD:T2}}>{hasTime?i+1:"·"}</span>
               <div style={{width:8,height:8,borderRadius:2,background:r.b.color,flexShrink:0}}/>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:io?13:12,fontWeight:700,color:io?r.b.color:"#fff",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+                <div style={{fontSize:io?13:12,fontWeight:700,color:io?r.b.color:T1,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
                   {r.b.name}{io?" ⭐":""}
                 </div>
                 <div style={{fontSize:8,color:T2}}>{r.b.bowNum&&`Proa ${r.b.bowNum} · `}{LEG_DEF[Math.max(0,r.leg-1)]?.label||"En salida"}</div>
@@ -2656,7 +2753,7 @@ function TabTablas({state,race}){
                   <span style={{fontSize:10,fontWeight:900,color:isDark(b.hullColor||b.color)?"#fff":"#000"}}>{b.bowNum||"?"}</span>
                 </div>
                 <div style={{flex:1}}>
-                  <span style={{fontSize:12,fontWeight:700,color:isOwn?b.color:"#fff"}}>{b.name}{isOwn?" ⭐":""}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:isOwn?b.color:T1}}>{b.name}{isOwn?" ⭐":""}</span>
                   <div style={{display:"flex",gap:6,alignItems:"center",marginTop:1}}>
                     <span style={{fontSize:9,color:CYN,fontFamily:"monospace",fontWeight:700}}>{scoringMode(sMode).label} {ratingToD(b,refW,sMode)?.toFixed(1)??"—"}</span>
                     <a href={googleUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:9,color:ACC,fontWeight:700}}>🔍 Certificado ORC →</a>
@@ -2702,7 +2799,7 @@ function TabTablas({state,race}){
                     <span style={{fontSize:13,fontWeight:900,color:isDark(b.hullColor||b.color)?"#fff":"#000"}}>{b.bowNum||idx+1}</span>
                   </div>
                   <div style={{flex:1}}>
-                    <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{b.name}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:T1}}>{b.name}</div>
                     <div style={{fontSize:9,color:T2}}>{scoringMode(sMode).label} {ratingToD(b,refW,sMode)?.toFixed(1)??"—"} · {b.cls}</div>
                   </div>
                   <div style={{textAlign:"right"}}>
@@ -3396,7 +3493,7 @@ function NewChampWizard({onClose, onCreate}){
       <div style={panel}>
         {/* Header */}
         <div style={{display:"flex",alignItems:"center",marginBottom:16}}>
-          <span style={{fontSize:14,fontWeight:800,color:"#fff",flex:1}}>
+          <span style={{fontSize:14,fontWeight:800,color:T1,flex:1}}>
             {step===1?"Nuevo campeonato":step===2?"Modo de entrada":step===3&&mode==="auto"?"Web del campeonato":step==="3b"?"Links del campeonato":step==="3c"?"Seleccionar clase":step===3&&mode==="manual"?"Añadir barcos":"Selecciona tu barco ⭐"}
           </span>
           <button onClick={onClose} style={{background:"none",color:T2,fontSize:18}}>✕</button>
@@ -3418,14 +3515,14 @@ function NewChampWizard({onClose, onCreate}){
             <div style={{fontSize:12,color:T2,marginBottom:14,lineHeight:1.6}}>
               ¿Cómo quieres introducir los barcos de la flota?
             </div>
-            <button onClick={()=>{setMode("auto");setStep(3);}} style={{display:"flex",alignItems:"flex-start",gap:12,width:"100%",padding:"14px 14px",background:CARD2,border:`1px solid ${BDR}`,borderLeft:`3px solid ${ACC}`,borderRadius:10,marginBottom:8,textAlign:"left",color:"#fff"}}>
+            <button onClick={()=>{setMode("auto");setStep(3);}} style={{display:"flex",alignItems:"flex-start",gap:12,width:"100%",padding:"14px 14px",background:CARD2,border:`1px solid ${BDR}`,borderLeft:`3px solid ${ACC}`,borderRadius:10,marginBottom:8,textAlign:"left",color:T1}}>
               <span style={{fontSize:24,flexShrink:0}}>🌐</span>
               <div>
                 <div style={{fontSize:13,fontWeight:700,color:ACC,marginBottom:3}}>Automático — desde la web del campeonato</div>
                 <div style={{fontSize:11,color:T2}}>Pega la URL de la página del evento (ORC, club náutico, etc.) y el sistema extrae la lista de barcos y sus ratings GPH automáticamente.</div>
               </div>
             </button>
-            <button onClick={()=>{setMode("manual");setStep(3);}} style={{display:"flex",alignItems:"flex-start",gap:12,width:"100%",padding:"14px 14px",background:CARD2,border:`1px solid ${BDR}`,borderLeft:`3px solid ${GLD}`,borderRadius:10,textAlign:"left",color:"#fff"}}>
+            <button onClick={()=>{setMode("manual");setStep(3);}} style={{display:"flex",alignItems:"flex-start",gap:12,width:"100%",padding:"14px 14px",background:CARD2,border:`1px solid ${BDR}`,borderLeft:`3px solid ${GLD}`,borderRadius:10,textAlign:"left",color:T1}}>
               <span style={{fontSize:24,flexShrink:0}}>✏️</span>
               <div>
                 <div style={{fontSize:13,fontWeight:700,color:GLD,marginBottom:3}}>Manual</div>
@@ -3546,7 +3643,7 @@ function NewChampWizard({onClose, onCreate}){
             <div style={{fontSize:11,color:T2,marginBottom:12,lineHeight:1.5}}>
               Se encontraron <strong style={{color:T1}}>{allBoats.length} barcos</strong> en <strong style={{color:ACC}}>{foundClasses.length} clases</strong>. ¿En qué clase compites?
             </div>
-            <button onClick={()=>applyClass("todas")} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 13px",background:CARD2,border:`1px solid ${BDR}`,borderRadius:9,marginBottom:7,textAlign:"left",color:"#fff"}}>
+            <button onClick={()=>applyClass("todas")} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 13px",background:CARD2,border:`1px solid ${BDR}`,borderRadius:9,marginBottom:7,textAlign:"left",color:T1}}>
               <span style={{fontSize:18}}>🌊</span>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:T1}}>Todas las clases</div>
@@ -3556,7 +3653,7 @@ function NewChampWizard({onClose, onCreate}){
             {foundClasses.map(cls=>{
               const count = allBoats.filter(b=>b.cls===cls).length;
               return(
-                <button key={cls} onClick={()=>applyClass(cls)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 13px",background:CARD2,border:`1px solid ${BDR}`,borderLeft:`3px solid ${ACC}`,borderRadius:9,marginBottom:7,textAlign:"left",color:"#fff"}}>
+                <button key={cls} onClick={()=>applyClass(cls)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 13px",background:CARD2,border:`1px solid ${BDR}`,borderLeft:`3px solid ${ACC}`,borderRadius:9,marginBottom:7,textAlign:"left",color:T1}}>
                   <span style={{fontSize:18}}>⛵</span>
                   <div style={{flex:1}}>
                     <div style={{fontSize:12,fontWeight:700,color:ACC}}>{cls}</div>
@@ -3582,7 +3679,7 @@ function NewChampWizard({onClose, onCreate}){
               {fleet.map((b,i)=>(
                 <div key={i} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 8px",background:CARD2,borderLeft:`3px solid ${b.color}`,borderRadius:7,marginBottom:4}}>
                   <Dot c={b.color} z={8}/>
-                  <span style={{flex:1,fontSize:12,color:"#fff"}}>{b.name}</span>
+                  <span style={{flex:1,fontSize:12,color:T1}}>{b.name}</span>
                   <span style={{fontSize:10,color:T2}}>{b.sailNo}</span>
                   <span style={{fontSize:10,fontFamily:"monospace",color:CYN}}>{b.gpH||"—"}</span>
                   <button onClick={()=>setFleet(f=>f.filter((_,j)=>j!==i))} style={{background:"none",color:T3,fontSize:13}}>✕</button>
@@ -3628,11 +3725,11 @@ function NewChampWizard({onClose, onCreate}){
                   background:ownId===b.id?`${b.color}25`:CARD2,
                   border:`1px solid ${ownId===b.id?b.color:BDR}`,
                   borderLeft:`4px solid ${b.color}`,
-                  borderRadius:9,marginBottom:5,textAlign:"left",color:"#fff"
+                  borderRadius:9,marginBottom:5,textAlign:"left",color:T1
                 }}>
                   <Dot c={b.color} z={ownId===b.id?13:10}/>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:ownId===b.id?800:500,color:ownId===b.id?b.color:"#fff",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+                    <div style={{fontSize:13,fontWeight:ownId===b.id?800:500,color:ownId===b.id?b.color:T1,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
                       {b.name}
                     </div>
                     <div style={{fontSize:9,color:T2}}>{b.sailNo}{b.cls?" · "+b.cls:""}</div>
@@ -3720,7 +3817,7 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
 
       <div style={{textAlign:"center",padding:"14px 0 18px"}}>
         <div style={{fontSize:44,marginBottom:6}}>⛵</div>
-        <h1 style={{fontSize:22,fontWeight:800,color:"#fff",letterSpacing:-1,marginBottom:3}}>ORC Race Tracker</h1>
+        <h1 style={{fontSize:22,fontWeight:800,color:T1,letterSpacing:-1,marginBottom:3}}>ORC Race Tracker</h1>
         <p style={{fontSize:10,color:T2}}>Clasificación ORC en tiempo real · v8</p>
       </div>
 
@@ -4002,6 +4099,15 @@ export default function App(){
   const [showWizard, setShowWizard] = useState(false);
   // Rol del dispositivo actual (guardado localmente, no compartido)
   const [role,       setRole]       = useState(()=>localStorage.getItem('orc-role')||'patron');
+  const [theme,      setTheme]      = useState(()=>localStorage.getItem('orc-theme')||'dark');
+  useEffect(()=>{
+    try{
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('orc-theme', theme);
+      // color de fondo del navegador (barra de estado móvil)
+      document.documentElement.style.background = theme==='light' ? '#f2f5f9' : '#070d18';
+    }catch{}
+  },[theme]);
   const [showRoles,  setShowRoles]  = useState(false);
   const saveRef    = useRef(false);
   const lastSaveTs = useRef(0);
@@ -4153,6 +4259,21 @@ export default function App(){
     return()=>clearInterval(id);
   },[ready, DEVICE_ID]);
 
+  // Realtime (Supabase) — refresca al instante cuando otro dispositivo cambia algo.
+  // Solo activo si la nube está configurada y el campeonato existe en ella.
+  useEffect(()=>{
+    if(!ready || !cloud.isCloudEnabled()) return;
+    const cloudId = state?._cloudId;
+    if(!cloudId) return;
+    const unsub = cloud.subscribe(cloudId, async ()=>{
+      // Evitar pisar un cambio propio recién guardado
+      if(Date.now()-lastSaveTs.current < 1500) return;
+      const fresh = await loadCh(currentId);
+      if(fresh) setState(prev=>({...fresh, _champId:prev._champId, _cloudId:cloudId}));
+    });
+    return unsub;
+  },[ready, state?._cloudId, currentId, DEVICE_ID]);
+
   // Seleccionar un campeonato diferente
   const selectChamp = useCallback(async(champId)=>{
     if(champId===currentId){setTab(2);return;}
@@ -4223,14 +4344,14 @@ export default function App(){
       {showRoles&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:9998,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={()=>setShowRoles(false)}>
           <div style={{background:CARD,border:`1px solid ${BDR}`,borderRadius:"14px 14px 0 0",padding:"16px 14px 28px",width:"100%",maxWidth:480}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontSize:13,fontWeight:800,color:"#fff",marginBottom:4,textAlign:"center"}}>Selecciona tu rol en esta regata</div>
+            <div style={{fontSize:13,fontWeight:800,color:T1,marginBottom:4,textAlign:"center"}}>Selecciona tu rol en esta regata</div>
             <div style={{fontSize:10,color:T2,textAlign:"center",marginBottom:14}}>Cada dispositivo puede tener un rol distinto · Se guarda localmente</div>
             {ROLES.map(r=>(
               <button key={r.id} onClick={()=>changeRole(r.id)} style={{
                 display:"flex",alignItems:"center",gap:12,width:"100%",padding:"12px 14px",
                 background:role===r.id?`${r.col}22`:CARD2,
                 border:`1px solid ${role===r.id?r.col:BDR}`,borderLeft:`4px solid ${r.col}`,
-                borderRadius:10,marginBottom:8,textAlign:"left",color:"#fff"
+                borderRadius:10,marginBottom:8,textAlign:"left",color:T1
               }}>
                 <span style={{fontSize:22,flexShrink:0}}>{r.icon}</span>
                 <div style={{flex:1}}>
@@ -4250,12 +4371,17 @@ export default function App(){
         <div style={{padding:"5px 12px",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0,display:"flex",alignItems:"center",gap:7}}>
           <div style={{flex:1}}>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#fff"}}>{state.champ?.name||"ORC Race Tracker"}</div>
-              <span style={{fontSize:8,background:GRN,color:"#000",borderRadius:4,padding:"1px 5px",fontWeight:800}}>v8</span>
+              <div style={{fontSize:11,fontWeight:700,color:T1}}>{state.champ?.name||"ORC Race Tracker"}</div>
+              <span style={{fontSize:8,background:GRN,color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:800}}>v8</span>
             </div>
             <div style={{fontSize:9,color:T2}}>{activeRace?.name||"Sin prueba"} · {state.fleet?.length||0} barcos</div>
           </div>
           {sync&&<span style={{fontSize:9,color:GRN}}>● </span>}
+          {/* Interruptor de tema claro/oscuro */}
+          <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} title="Cambiar tema" style={{
+            display:"flex",alignItems:"center",justifyContent:"center",width:30,height:30,
+            background:CARD2,border:`1px solid ${BDR}`,borderRadius:18,cursor:"pointer",flexShrink:0,fontSize:14
+          }}>{theme==="dark"?"☀️":"🌙"}</button>
           {/* Botón de rol — siempre visible */}
           <button onClick={()=>setShowRoles(true)} style={{
             display:"flex",alignItems:"center",gap:4,padding:"4px 9px",
