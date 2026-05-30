@@ -1885,9 +1885,6 @@ function TabConfig({state,setState,race}){
 
           {/* Sincronización en la nube (Supabase) */}
           <CloudSyncBlock state={state} setState={setState}/>
-
-          {/* Sincronizar resultados ORC */}
-          <ChampSyncBlock state={state} setState={setState}/>
         </>)}
 
       </div>
@@ -2827,7 +2824,7 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
                   <th style={{padding:"5px 6px",textAlign:"left",color:T1,fontWeight:700,minWidth:90}}>Barco</th>
                   {(champStandings[0]?.breakdown||[]).map((_,i)=>(
                     <th key={i} style={{padding:"5px 4px",textAlign:"center",color:GLD,fontWeight:700,width:34}}>
-                      R{i+1}
+                      R{i+1}{(state.champ?.ndRaces||[]).includes(i)?<span style={{color:GLD}}> 🔒</span>:""}
                     </th>
                   ))}
                   {startTime&&(
@@ -3022,7 +3019,7 @@ function TabTablas({state,race}){
   );
 }
 
-function StandingsTable({standings, ownBoat}){
+function StandingsTable({standings, ownBoat, ndRaces=[]}){
   if(!standings?.length) return null;
   const numRaces = Math.max(...standings.map(s=>s.breakdown?.length||0));
   const races = Array.from({length:numRaces},(_,i)=>i);
@@ -3038,7 +3035,7 @@ function StandingsTable({standings, ownBoat}){
             <th style={{padding:"6px 4px",textAlign:"center",color:T2,fontWeight:700,width:35}}>Proa</th>
             <th style={{padding:"6px 6px",textAlign:"left",color:T2,fontWeight:700}}>Tipo</th>
             {races.map(i=>(
-              <th key={i} style={{padding:"6px 8px",textAlign:"center",color:GLD,fontWeight:700,width:42}}>R{i+1}</th>
+              <th key={i} style={{padding:"6px 8px",textAlign:"center",color:GLD,fontWeight:700,width:42}}>R{i+1}{ndRaces.includes(i)?" 🔒":""}</th>
             ))}
             <th style={{padding:"6px 8px",textAlign:"right",color:GRN,fontWeight:700,width:50}}>Total</th>
           </tr>
@@ -3092,6 +3089,7 @@ function TabResultados({state,setState}){
   const [view,setView]   = useState("oficial");
   const [syncing,setSyncing] = useState(false);
   const [syncMsg,setSyncMsg] = useState("");
+  const fileRef = useRef(null);
 
   const ownBoat = state.fleet?.find(b=>b.id===state.champ?.ownId);
   const orcStandings = state.champ?.orcStandings||[];
@@ -3135,7 +3133,29 @@ function TabResultados({state,setState}){
     setSyncing(false);
   };
 
-  // Clasificación local (calculada desde los tiempos registrados en la app)
+  const onPhoto = async(e)=>{
+    const file = e.target.files?.[0];
+    if(!file) return;
+    setSyncing(true); setSyncMsg("📷 Leyendo la captura...");
+    try{
+      const b64 = await compressImage(file, 1400, 0.82);
+      const data = await extractResultsFromImage(b64, "image/jpeg");
+      if(data?.overallStandings?.length){
+        setState(s=>({...s,champ:{...s.champ,
+          orcStandings:data.overallStandings,
+          orcRaces:data.races||[],
+          orcNumRaces:data.numRaces||data.overallStandings[0]?.breakdown?.length||0,
+          name:data.eventName||s.champ.name,
+          orcLastSync:Date.now()
+        }}));
+        setSyncMsg(`✓ ${data.numRaces||data.overallStandings[0]?.breakdown?.length||0} pruebas · ${data.overallStandings.length} barcos (captura)`);
+      } else {
+        setSyncMsg("No pude leer la tabla. Asegúrate de que la captura sea nítida (N.Vela, pruebas y puntos).");
+      }
+    }catch(err){ setSyncMsg("Error leyendo la imagen: "+err.message); }
+    setSyncing(false);
+    if(fileRef.current) fileRef.current.value="";
+  };
   const getRaceStd=r=>computeStd(r.passages,r.startTime,state.fleet,r.course,r.scoringMode||state.champ?.scoringMode||DEFAULT_SCORING).map((x,i)=>({...x,pos:x.ct!=null?i+1:state.fleet.length+1}));
   const localChamp = state.fleet.map(b=>{
     let nett=0;
@@ -3165,11 +3185,17 @@ function TabResultados({state,setState}){
             </a>
           )}
         </div>
-        {syncMsg&&<div style={{fontSize:10,color:syncMsg.startsWith("✓")?GRN:syncMsg.startsWith("⚠")?GLD:RED,marginBottom:6}}>{syncMsg}</div>}
+        {/* Subir captura de resultados */}
+        <button onClick={()=>fileRef.current?.click()} disabled={syncing}
+          style={{width:"100%",padding:"9px 0",background:syncing?CARD2:GRN,color:"#fff",borderRadius:7,fontSize:11,fontWeight:700,border:"none",cursor:syncing?"default":"pointer",marginBottom:6}}>
+          📷 Subir captura de resultados
+        </button>
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onPhoto} style={{display:"none"}}/>
+        {syncMsg&&<div style={{fontSize:10,color:syncMsg.startsWith("✓")?GRN:syncMsg.startsWith("⚠")?GLD:syncMsg.startsWith("📷")?CYN:RED,marginBottom:6}}>{syncMsg}</div>}
         {lastSync&&<div style={{fontSize:9,color:T3,marginBottom:6}}>Última actualización: {new Date(lastSync).toLocaleTimeString("es-ES")}</div>}
 
         {orcStandings.length>0
-          ?<StandingsTable standings={orcStandings} ownBoat={ownBoat}/>
+          ?<StandingsTable standings={orcStandings} ownBoat={ownBoat} ndRaces={state.champ?.ndRaces||[]}/>
           :<div style={{textAlign:"center",padding:"24px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:11}}>
             Sin datos oficiales. Pulsa "Actualizar campeonato".
           </div>
@@ -4013,7 +4039,7 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
       <div style={{textAlign:"center",padding:"14px 0 18px"}}>
         <div style={{fontSize:44,marginBottom:6}}>⛵</div>
         <h1 style={{fontSize:22,fontWeight:800,color:T1,letterSpacing:-1,marginBottom:3}}>ORC Race Tracker</h1>
-        <p style={{fontSize:10,color:T2}}>Clasificación ORC en tiempo real · v8</p>
+        <p style={{fontSize:10,color:T2}}>Clasificación ORC en tiempo real · v9</p>
       </div>
 
       <Btn v="＋ Nuevo campeonato" onClick={onNew} c="grn" fw lg st={{marginBottom:10}}/>
@@ -4066,6 +4092,7 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
 // ── PESTAÑA REGATAS — gestión de pruebas y recorrido ─────────────────────────
 function TabRegatas({state, setState, race}){
   const [sub, setSub] = useState("regatas");
+  const [confirmR, setConfirmR] = useState(null);
 
   const co = race?.course||DCOURSE;
   const coastalLegs = co.coastalLegs||[];
@@ -4085,6 +4112,7 @@ function TabRegatas({state, setState, race}){
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      <ConfirmDialog msg={confirmR?.msg} onOk={()=>{confirmR?.onOk();setConfirmR(null);}} onCancel={()=>setConfirmR(null)}/>
       {/* Sub-tabs */}
       <div style={{display:"flex",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0}}>
         {[["regatas","🚩 Regatas"],["recorrido","⚓ Recorrido"]].map(([k,l])=>(
@@ -4201,7 +4229,7 @@ function TabRegatas({state, setState, race}){
                       style={{padding:"4px 8px",borderRadius:5,background:r.discarded?`${GRN}22`:`${GLD}22`,color:r.discarded?GRN:GLD,fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>
                       {r.discarded?"↩":"⊘"}
                     </button>
-                    <button onClick={()=>setConfirm2({msg:`¿Eliminar "${r.name}" definitivamente?`,onOk:()=>setState(s=>{
+                    <button onClick={()=>setConfirmR({msg:`¿Eliminar "${r.name}" definitivamente?`,onOk:()=>setState(s=>{
                         const rem=s.races.filter(x=>x.id!==r.id);
                         const races=rem.length?rem:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:s.races[0]?.course||DCOURSE,discarded:false}];
                         const activeRaceId = s.activeRaceId===r.id ? races[0].id : s.activeRaceId;
@@ -4578,7 +4606,7 @@ export default function App(){
           <div style={{flex:1}}>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               <div style={{fontSize:11,fontWeight:700,color:T1}}>{state.champ?.name||"ORC Race Tracker"}</div>
-              <span style={{fontSize:8,background:GRN,color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:800}}>v8</span>
+              <span style={{fontSize:8,background:GRN,color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:800}}>v9</span>
             </div>
             <div style={{fontSize:9,color:T2}}>{activeRace?.name||"Sin prueba"} · {state.fleet?.length||0} barcos</div>
           </div>
