@@ -4296,11 +4296,11 @@ export default function App(){
   },[currentId, state]);
 
   // Crear nuevo campeonato desde el wizard
-  const createChamp = useCallback(async({name, fleet, ownId, mainUrl="", resultsUrl="", docsUrl="", photosUrl="", entryListUrl=""})=>{
+  const createChamp = useCallback(async({name, fleet, ownId, mainUrl="", resultsUrl="", docsUrl="", photosUrl="", entryListUrl="", scoringMode=DEFAULT_SCORING})=>{
     const id = `champ_${Date.now()}`;
     const newState = {
       ...INIT, _champId:id,
-      champ:{name, ownId, mainUrl, resultsUrl, docsUrl, photosUrl, entryListUrl},
+      champ:{name, ownId, mainUrl, resultsUrl, docsUrl, photosUrl, entryListUrl, scoringMode},
       fleet: fleet.map(b=>({...b})),
       races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],
       activeRaceId:"r1"
