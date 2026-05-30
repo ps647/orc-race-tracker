@@ -3057,8 +3057,8 @@ function StandingsTable({standings, ownBoat}){
                   {idx===0?"🥇":idx===1?"🥈":idx===2?"🥉":s.pos||idx+1}
                 </td>
                 <td style={{padding:"7px 6px",fontSize:9,color:T2,fontWeight:500}}>{s.nation||"—"}</td>
-                <td style={{padding:"7px 6px",fontWeight:isOwn?800:500,color:isOwn?GLD:"#fff",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:130}}>
-                  {s.boat}
+                <td style={{padding:"7px 6px",fontWeight:isOwn?800:500,color:isOwn?GLD:T1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:130}}>
+                  {s.boat||s.sailNo||"—"}
                 </td>
                 <td style={{padding:"7px 6px",fontSize:9,color:T2,whiteSpace:"nowrap"}}>{s.sailNo}</td>
                 <td style={{padding:"7px 4px",textAlign:"center",fontSize:9,color:T2}}>{s.bowNum||"—"}</td>
