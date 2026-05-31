@@ -1906,6 +1906,7 @@ function CloudSyncBlock({state, setState}){
   const [busy, setBusy] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [cloudList, setCloudList] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
   const enabled = cloud.isCloudEnabled();
   const code = state?.champ?.joinCode;
 
@@ -1926,6 +1927,17 @@ function CloudSyncBlock({state, setState}){
       setState(s=>({...s, champ:{...s.champ, joinCode:champRow.join_code}, _cloudId:champRow.id}));
       setCloudList(null);
       setMsg("✅ Código recuperado: "+champRow.join_code);
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+  };
+
+  const deleteCloudChamp = async(champRow)=>{
+    setBusy(true); setMsg("⏳ Borrando de la nube...");
+    try{
+      await cloud.deleteByCloudId(champRow.id);
+      const list = await cloud.listChampionships();
+      setCloudList(list);
+      setMsg(`✅ Borrado "${champRow.name}" (${champRow.join_code})`);
     }catch(e){ setMsg("❌ "+e.message); }
     setBusy(false);
   };
@@ -1990,12 +2002,16 @@ function CloudSyncBlock({state, setState}){
           )}
           {cloudList && (
             <div style={{display:"grid",gap:5}}>
-              <div style={{fontSize:9,color:T2,marginBottom:2}}>Elige tu campeonato:</div>
+              <div style={{fontSize:9,color:T2,marginBottom:2}}>Elige tu campeonato (o bórralo con 🗑):</div>
               {cloudList.map(c=>(
-                <button key={c.id} onClick={()=>linkToCloud(c)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",background:CARD2,border:`1px solid ${BDR}`,borderRadius:7,cursor:"pointer",textAlign:"left"}}>
-                  <span style={{fontSize:11,color:T1,fontWeight:600}}>{c.name}</span>
-                  <span style={{fontSize:13,color:GRN,fontFamily:"monospace",fontWeight:800,letterSpacing:1}}>{c.join_code}</span>
-                </button>
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:5}}>
+                  <button onClick={()=>linkToCloud(c)} style={{flex:1,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",background:CARD2,border:`1px solid ${BDR}`,borderRadius:7,cursor:"pointer",textAlign:"left"}}>
+                    <span style={{fontSize:11,color:T1,fontWeight:600}}>{c.name}</span>
+                    <span style={{fontSize:13,color:GRN,fontFamily:"monospace",fontWeight:800,letterSpacing:1}}>{c.join_code}</span>
+                  </button>
+                  <button onClick={()=>setConfirmDel(c)} title="Borrar de la nube"
+                    style={{padding:"8px 10px",background:`${RED}18`,color:RED,border:`1px solid ${RED}44`,borderRadius:7,fontSize:13,cursor:"pointer",flexShrink:0}}>🗑</button>
+                </div>
               ))}
             </div>
           )}
@@ -2018,6 +2034,33 @@ function CloudSyncBlock({state, setState}){
             <Btn v="Entrar" onClick={join} c="acc" dis={busy||!joinCode.trim()}/>
           </div>
         </div>
+      )}
+
+      {/* Gestionar / borrar campeonatos de la nube — siempre disponible */}
+      {enabled && (
+        <div style={{borderTop:`1px solid ${BDR}`,marginTop:8,paddingTop:8}}>
+          <Btn v={busy?"⏳...":"☁️ Ver y borrar campeonatos en la nube"} onClick={recoverFromCloud} c="dim" fw dis={busy}/>
+          {cloudList && (
+            <div style={{display:"grid",gap:5,marginTop:8}}>
+              {cloudList.map(c=>(
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:5}}>
+                  <button onClick={()=>linkToCloud(c)} style={{flex:1,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",background:CARD2,border:`1px solid ${BDR}`,borderRadius:7,cursor:"pointer",textAlign:"left"}}>
+                    <span style={{fontSize:11,color:T1,fontWeight:600}}>{c.name}</span>
+                    <span style={{fontSize:13,color:GRN,fontFamily:"monospace",fontWeight:800,letterSpacing:1}}>{c.join_code}</span>
+                  </button>
+                  <button onClick={()=>setConfirmDel(c)} title="Borrar de la nube"
+                    style={{padding:"8px 10px",background:`${RED}18`,color:RED,border:`1px solid ${RED}44`,borderRadius:7,fontSize:13,cursor:"pointer",flexShrink:0}}>🗑</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {confirmDel && (
+        <ConfirmDialog msg={`¿Borrar "${confirmDel.name}" (${confirmDel.join_code}) de la nube? Se elimina para TODOS los dispositivos y no se puede deshacer.`}
+          onOk={()=>{ deleteCloudChamp(confirmDel); setConfirmDel(null); }}
+          onCancel={()=>setConfirmDel(null)}/>
       )}
 
       {msg && <div style={{marginTop:8,fontSize:10,padding:"6px 9px",borderRadius:7,
