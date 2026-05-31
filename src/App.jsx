@@ -4671,16 +4671,15 @@ export default function App(){
   const wrappedSetState = useCallback(fn=>{
     setState(prev=>{
       const next = typeof fn==="function"?fn(prev):fn;
-      if(saveRef.current && currentId){
+      // Usar el id del propio estado si difiere (p.ej. tras entrar por código)
+      const saveId = next._champId || currentId;
+      if(saveRef.current && saveId){
         lastSaveTs.current = Date.now();
         setSync(true);
-        const stateToSave = {...next, _champId:currentId, _deviceId:DEVICE_ID};
-        // Guardar el campeonato activo
-        saveCh(currentId, stateToSave);
-        // Guardar en la clave activa (para sincronización)
+        const stateToSave = {...next, _champId:saveId, _deviceId:DEVICE_ID};
+        saveCh(saveId, stateToSave);
         saveS(stateToSave).then(()=>setTimeout(()=>setSync(false),600));
-        // Actualizar índice con nombre y conteos actualizados
-        const updatedIdx = champsRef.current.map(c=>c.id===currentId
+        const updatedIdx = champsRef.current.map(c=>c.id===saveId
           ? {...c, name:next.champ?.name||c.name, racesCount:next.races?.length||c.racesCount, fleetCount:next.fleet?.length||c.fleetCount}
           : c);
         setChampsList(updatedIdx);
@@ -4689,6 +4688,16 @@ export default function App(){
       return next;
     });
   },[currentId]);
+
+  // Mantener currentId alineado con el campeonato cargado (p.ej. al entrar por código)
+  useEffect(()=>{
+    if(state?._champId && state._champId!==currentId){
+      setCurrentId(state._champId);
+      // persistir la relación local→cloud para que el realtime y el guardado funcionen
+      if(state._cloudId){ const k=chKey(state._champId); const cur=lsGet(k)||{}; lsSet(k,{...cur,...state,_cloudId:state._cloudId}); }
+    }
+  // eslint-disable-next-line
+  },[state?._champId, state?._cloudId]);
 
   // Polling — solo aplica estado de OTRO dispositivo para evitar auto-revert
   useEffect(()=>{
@@ -4712,7 +4721,7 @@ export default function App(){
     const unsub = cloud.subscribe(cloudId, async ()=>{
       // Evitar pisar un cambio propio recién guardado
       if(Date.now()-lastSaveTs.current < 1500) return;
-      const fresh = await loadCh(currentId);
+      const fresh = await cloud.loadByCloudId(cloudId);   // carga directa por cloudId
       if(fresh) setState(prev=>({...fresh, _champId:prev._champId, _cloudId:cloudId}));
     });
     return unsub;
