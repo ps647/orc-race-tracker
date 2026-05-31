@@ -2327,9 +2327,15 @@ function TabEnVivo({state,setState,role="patron"}){
   };
   const addMark = ()=>{
     if(!started) return;
-    updRace(r=>({...r, marks:[...(r.marks||[]), {id:`m${Date.now()}`, time:Date.now()}]}));
+    const mark = {id:`m${Date.now()}-${(cloud.deviceId?.()||"").slice(0,4)}`, time:Date.now()};
+    updRace(r=>({...r, marks:[...(r.marks||[]), mark]}));
+    // Subir la marca a su tabla propia para que se sincronice sin pisar otras
+    cloud.recordMark(state, {raceLocalId: activeRace?.id, mark}).catch(()=>{});
   };
-  const deleteMark = mid => updRace(r=>({...r, marks:(r.marks||[]).filter(m=>m.id!==mid)}));
+  const deleteMark = mid => {
+    updRace(r=>({...r, marks:(r.marks||[]).filter(m=>m.id!==mid)}));
+    cloud.removeMark(state, mid).catch(()=>{});
+  };
   // asignar una marca a un barco → se registra en su SIGUIENTE boya automáticamente
   const assignMark = (mid, boatId)=>{
     const done = passCount(boatId);
@@ -2343,6 +2349,8 @@ function TabEnVivo({state,setState,role="patron"}){
       const remaining = (r.marks||[]).filter(m=>m.id!==mid);
       return {...r, passages, marks:remaining};
     });
+    // La marca pasa a ser un passage: borrarla de la tabla de marcas en la nube
+    cloud.removeMark(state, mid).catch(()=>{});
   };
 
   const race         = activeRace; // alias para el resto del JSX
@@ -2596,8 +2604,8 @@ function TabEnVivo({state,setState,role="patron"}){
                   <div style={{fontSize:11,color:T2,fontWeight:700}}>✅ Tiempos asignados ({passages.length})</div>
                   <button onClick={()=>setConfirm({msg:"¿Borrar TODOS los tiempos de esta prueba? (no afecta a resultados oficiales)",onOk:()=>{
                       const rid=activeRace?.id;
-                      updRace(r=>({...r,passages:[]}));
-                      if(rid) cloud.clearRacePassages(state, rid).catch(()=>{});
+                      updRace(r=>({...r,passages:[],marks:[]}));
+                      if(rid){ cloud.clearRacePassages(state, rid).catch(()=>{}); cloud.clearRaceMarks(state, rid).catch(()=>{}); }
                     }})}
                     style={{padding:"4px 9px",borderRadius:6,background:`${RED}18`,color:RED,fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>
                     🗑 Limpiar todos
