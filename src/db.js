@@ -158,6 +158,20 @@ export async function recordPassage(state, { raceLocalId, boatSailNo, leg, realT
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
+// Borra TODOS los passages de una prueba en la nube (para "Limpiar todos").
+export async function clearRacePassages(state, raceLocalId) {
+  if (!isCloudEnabled()) return { ok: true, local: true };
+  try {
+    const sb = getClient();
+    const champId = lsGet(chKey(state._champId))?._cloudId;
+    if (!champId) return { ok: false };
+    const raceCloudId = await raceCloudIdFor(sb, champId, raceLocalId);
+    if (!raceCloudId) return { ok: false };
+    const { error } = await sb.from("passages").delete().eq("race_id", raceCloudId);
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 // ── Suscripción realtime ──────────────────────────────────────────────────────
 // onChange() se dispara con cada INSERT/UPDATE/DELETE en el campeonato.
 // Devuelve una función para desuscribirse.
