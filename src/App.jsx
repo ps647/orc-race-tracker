@@ -2236,9 +2236,15 @@ function TabEnVivo({state,setState,role="patron"}){
   // ── MARCAS RÁPIDAS: capturar tiempo ahora, asignar barco+boya después ──
   const legs = raceLegs(course);            // tramos de esta prueba (según vueltas)
   const marks = activeRace?.marks || [];
+  // ¿cuántos pasos tiene un barco? (cuenta por boatId o por sailNo, para casar con la nube)
+  const passCount = boatId => {
+    const b = fleet.find(x=>x.id===boatId);
+    const sn = b?.sailNo;
+    return passages.filter(p => p.boatId===boatId || (sn && p.boatSailNo===sn) || p.boatSailNo===boatId).length;
+  };
   // siguiente boya que le toca a un barco = nº de pasos que ya tiene + 1
   const nextLeg = boatId => {
-    const n = passages.filter(p=>p.boatId===boatId).length;
+    const n = passCount(boatId);
     return n < legs.length ? n+1 : null;
   };
   const addMark = ()=>{
@@ -2248,13 +2254,14 @@ function TabEnVivo({state,setState,role="patron"}){
   const deleteMark = mid => updRace(r=>({...r, marks:(r.marks||[]).filter(m=>m.id!==mid)}));
   // asignar una marca a un barco → se registra en su SIGUIENTE boya automáticamente
   const assignMark = (mid, boatId)=>{
+    const done = passCount(boatId);
+    const leg = done+1;
+    if(leg > legs.length) return; // ya llegó
+    const b = fleet.find(x=>x.id===boatId);
     updRace(r=>{
       const mark = (r.marks||[]).find(m=>m.id===mid);
       if(!mark) return r;
-      const done = r.passages.filter(p=>p.boatId===boatId).length;
-      const leg = done+1;
-      if(leg > legs.length) return r; // ya llegó
-      const passages = [...r.passages, {boatId, leg, realTime:mark.time, by:role}];
+      const passages = [...r.passages, {boatId, boatSailNo:b?.sailNo||boatId, leg, realTime:mark.time, by:role}];
       const remaining = (r.marks||[]).filter(m=>m.id!==mid);
       return {...r, passages, marks:remaining};
     });
@@ -2507,19 +2514,30 @@ function TabEnVivo({state,setState,role="patron"}){
             {/* Tiempos ya asignados (resumen, para editar/borrar) */}
             {passages.length>0&&(
               <div style={{marginTop:16}}>
-                <div style={{fontSize:11,color:T2,fontWeight:700,marginBottom:6}}>✅ Tiempos asignados ({passages.length})</div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                  <div style={{fontSize:11,color:T2,fontWeight:700}}>✅ Tiempos asignados ({passages.length})</div>
+                  <button onClick={()=>setConfirm({msg:"¿Borrar TODOS los tiempos de esta prueba? (no afecta a resultados oficiales)",onOk:()=>{
+                      const rid=activeRace?.id;
+                      updRace(r=>({...r,passages:[]}));
+                      if(rid) cloud.clearRacePassages(state, rid).catch(()=>{});
+                    }})}
+                    style={{padding:"4px 9px",borderRadius:6,background:`${RED}18`,color:RED,fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>
+                    🗑 Limpiar todos
+                  </button>
+                </div>
                 <div style={{display:"flex",flexDirection:"column",gap:4}}>
                   {[...passages].sort((a,z)=>z.realTime-a.realTime).map((p,i)=>{
-                    const b=fleet.find(x=>x.id===p.boatId);
-                    const el=Math.round((p.realTime-startTime)/1000);const mm=Math.floor(el/60),ss=el%60;
+                    const b=fleet.find(x=>x.id===p.boatId || x.sailNo===p.boatSailNo || x.sailNo===p.boatId);
+                    const el=startTime?Math.round((p.realTime-startTime)/1000):0;
+                    const neg=el<0; const am=Math.abs(el); const mm=Math.floor(am/60),ss=am%60;
                     return(
                       <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:CARD2,borderRadius:7}}>
                         <div style={{width:8,height:24,borderRadius:2,background:b?.color||BDR,flexShrink:0}}/>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:11,fontWeight:700,color:T1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b?.name||p.boatId}</div>
-                          <div style={{fontSize:9,color:T2}}>{legs[p.leg-1]?.label||`Boya ${p.leg}`} · {mm}:{ss.toString().padStart(2,"0")}</div>
+                          <div style={{fontSize:11,fontWeight:700,color:T1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b?.name||p.boatSailNo||p.boatId}</div>
+                          <div style={{fontSize:9,color:neg?RED:T2}}>{legs[p.leg-1]?.label||`Boya ${p.leg}`} · {neg?"⚠ tiempo inválido":`${mm}:${ss.toString().padStart(2,"0")}`}</div>
                         </div>
-                        <button onClick={()=>setConfirm({msg:`¿Borrar el paso de ${b?.name||"este barco"}?`,onOk:()=>updRace(r=>({...r,passages:r.passages.filter(x=>!(x.boatId===p.boatId&&x.leg===p.leg&&x.realTime===p.realTime))}))})}
+                        <button onClick={()=>setConfirm({msg:`¿Borrar el paso de ${b?.name||"este barco"}?`,onOk:()=>updRace(r=>({...r,passages:r.passages.filter(x=>x!==p)}))})}
                           style={{padding:"4px 8px",borderRadius:5,background:`${RED}18`,color:RED,fontSize:11,border:"none",cursor:"pointer",flexShrink:0}}>🗑</button>
                       </div>
                     );
@@ -2578,7 +2596,7 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
   // tiempo real (s desde salida) por barco y nº de tramo
   const realT = {};
   legs.forEach(L=>{ realT[L.n] = {};
-    fleet.forEach(b=>{ const p = passages.find(x=>x.boatId===b.id && x.leg===L.n);
+    fleet.forEach(b=>{ const p = passages.find(x=>x.leg===L.n && (x.boatId===b.id || (b.sailNo&&x.boatSailNo===b.sailNo) || x.boatSailNo===b.id));
       if(p) realT[L.n][b.id] = (p.realTime-startTime)/1000; });
   });
 
