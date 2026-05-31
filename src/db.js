@@ -98,6 +98,17 @@ export async function saveChampionship(localId, state) {
   }
 }
 
+// Cargar directamente por el id de la nube (para realtime, sin depender de localStorage).
+export async function loadByCloudId(cloudId) {
+  if (!isCloudEnabled() || !cloudId) return null;
+  try {
+    const sb = getClient();
+    const { data: champ } = await sb.from("championships").select("*").eq("id", cloudId).maybeSingle();
+    if (!champ) return null;
+    return hydrate(sb, champ);
+  } catch { return null; }
+}
+
 // Cargar un campeonato por su join_code (entrar con código).
 export async function loadByCode(code) {
   if (!isCloudEnabled()) return null;
