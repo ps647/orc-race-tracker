@@ -170,6 +170,26 @@ export async function deleteChampionship(localId) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
+// Borrar UNA prueba de la nube (y sus passages y marcas) por su local_id.
+// upsertRaces nunca borra; sin esto, una prueba eliminada en un móvil reaparece
+// al sincronizar desde otro. Aquí la borramos de verdad en Supabase.
+export async function deleteRace(state, raceLocalId) {
+  if (!isCloudEnabled()) return { ok: true, local: true };
+  try {
+    const sb = getClient();
+    const champId = lsGet(chKey(state._champId))?._cloudId || state._cloudId;
+    if (!champId) return { ok: false };
+    const raceCloudId = await raceCloudIdFor(sb, champId, raceLocalId);
+    // Borrar passages de esa prueba (por su id de nube) y marcas (por local_id)
+    if (raceCloudId) await sb.from("passages").delete().eq("race_id", raceCloudId);
+    try { await sb.from("marks").delete().eq("championship_id", champId).eq("race_local_id", raceLocalId); } catch {}
+    // Limpiar la cache del id de nube de esta prueba
+    try { delete _raceIdCache[`${champId}:${raceLocalId}`]; } catch {}
+    const { error } = await sb.from("races").delete().eq("championship_id", champId).eq("local_id", raceLocalId);
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 // Registrar UN paso de baliza (append-only, dedup en servidor).
 export async function recordPassage(state, { raceLocalId, boatSailNo, leg, realTime }) {
   if (!isCloudEnabled()) return { ok: true, local: true };
