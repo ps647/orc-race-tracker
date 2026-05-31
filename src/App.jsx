@@ -4588,11 +4588,16 @@ function TabRegatas({state, setState, race}){
                       style={{padding:"4px 8px",borderRadius:5,background:r.discarded?`${GRN}22`:`${GLD}22`,color:r.discarded?GRN:GLD,fontSize:9,fontWeight:700,border:"none",cursor:"pointer"}}>
                       {r.discarded?"↩":"⊘"}
                     </button>
-                    <button onClick={()=>setConfirmR({msg:`¿Eliminar "${r.name}" definitivamente?`,onOk:()=>setState(s=>{
-                        const races=s.races.filter(x=>x.id!==r.id);
-                        const activeRaceId = s.activeRaceId===r.id ? (races[0]?.id||null) : s.activeRaceId;
-                        return{...s,races,activeRaceId};
-                      })})}
+                    <button onClick={()=>setConfirmR({msg:`¿Eliminar "${r.name}" definitivamente?`,onOk:()=>{
+                        const ridDel = r.id;
+                        setState(s=>{
+                          const races=s.races.filter(x=>x.id!==ridDel);
+                          const activeRaceId = s.activeRaceId===ridDel ? (races[0]?.id||null) : s.activeRaceId;
+                          return{...s,races,activeRaceId};
+                        });
+                        // Borrar también en la nube (si no, reaparece al sincronizar)
+                        cloud.deleteRace(state, ridDel).catch(()=>{});
+                      }})}
                       title="Eliminar prueba"
                       style={{padding:"4px 8px",borderRadius:5,background:`${RED}18`,color:RED,fontSize:11,fontWeight:700,border:"none",cursor:"pointer"}}>
                       🗑
