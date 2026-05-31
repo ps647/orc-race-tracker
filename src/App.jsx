@@ -4812,6 +4812,24 @@ export default function App(){
       setCurrentId(state._champId);
       // persistir la relación local→cloud para que el realtime y el guardado funcionen
       if(state._cloudId){ const k=chKey(state._champId); const cur=lsGet(k)||{}; lsSet(k,{...cur,...state,_cloudId:state._cloudId}); }
+      // Registrar el campeonato en el índice LOCAL si aún no está (clave al entrar
+      // por código: así aparece en Inicio y NO hay que crear nada en cada móvil).
+      const idx = champsRef.current || [];
+      if(!idx.some(c=>c.id===state._champId)){
+        const entry = {
+          id: state._champId,
+          name: state.champ?.name || "Campeonato",
+          racesCount: state.races?.length || 0,
+          fleetCount: state.fleet?.length || 0,
+          createdAt: Date.now(),
+        };
+        const newIdx = [...idx, entry];
+        setChampsList(newIdx);
+        saveIdx(newIdx);
+        // Guardar también el estado completo bajo su clave local y como estado activo
+        try{ lsSet(chKey(state._champId), {...state}); }catch{}
+        saveS({...state, _champId:state._champId});
+      }
     }
   // eslint-disable-next-line
   },[state?._champId, state?._cloudId]);
