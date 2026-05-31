@@ -208,14 +208,23 @@ export function subscribe(cloudId, onChange) {
 
 async function upsertChampionship(sb, state) {
   let existingId = lsGet(chKey(state._champId))?._cloudId;
-  const joinCode = (state.champ.joinCode || makeJoinCode(state.champ.name)).toUpperCase();
+  let fixedCode = state.champ.joinCode ? state.champ.joinCode.toUpperCase() : null;
 
-  // Buscar SIEMPRE por joinCode antes de crear, para no generar duplicados
-  // (al recargar, entrar por código, o si el cloudId local se perdió).
-  if (!existingId) {
-    const { data: found } = await sb.from("championships").select("id").eq("join_code", joinCode).maybeSingle();
+  // 1) Si ya tenemos un código fijo, buscar por ese código.
+  if (!existingId && fixedCode) {
+    const { data: found } = await sb.from("championships").select("id,join_code").eq("join_code", fixedCode).maybeSingle();
     if (found?.id) existingId = found.id;
   }
+  // 2) Si NO hay código fijo, buscar por NOMBRE un campeonato ya existente y reutilizarlo
+  //    (evita crear duplicados con código aleatorio para el mismo campeonato).
+  if (!existingId && !fixedCode && state.champ.name) {
+    const { data: byName } = await sb.from("championships")
+      .select("id,join_code").eq("name", state.champ.name)
+      .order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (byName?.id) { existingId = byName.id; fixedCode = byName.join_code; }
+  }
+  // 3) Solo si de verdad no existe ninguno, generamos un código nuevo.
+  const joinCode = (fixedCode || makeJoinCode(state.champ.name)).toUpperCase();
 
   const row = {
     join_code: joinCode,
