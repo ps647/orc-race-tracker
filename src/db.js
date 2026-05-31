@@ -13,6 +13,10 @@
 //   NUNCA uses la "secret key" (sb_secret_...).
 // ============================================================================
 
+// Normaliza un nº de vela para comparaciones/sincronización:
+// "ESP-52801", "ESP 52801", "esp52801" → "ESP52801"
+export function normSail(s){ return String(s||"").toUpperCase().replace(/[\s-]/g,""); }
+
 import { createClient } from "@supabase/supabase-js";
 
 // ── localStorage helpers (fallback) ─────────────────────────────────────────
@@ -152,7 +156,7 @@ export async function recordPassage(state, { raceLocalId, boatSailNo, leg, realT
     if (!champId || !raceCloudId) return { ok: false };
     const { error } = await sb.from("passages").upsert({
       championship_id: champId, race_id: raceCloudId,
-      boat_sail_no: boatSailNo, leg, real_time: realTime, device_id: deviceId(),
+      boat_sail_no: normSail(boatSailNo), leg, real_time: realTime, device_id: deviceId(),
     }, { onConflict: "race_id,boat_sail_no,leg", ignoreDuplicates: true });
     return { ok: !error, error: error?.message };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -195,9 +199,9 @@ async function upsertChampionship(sb, state) {
   let existingId = lsGet(chKey(state._champId))?._cloudId;
   const joinCode = (state.champ.joinCode || makeJoinCode(state.champ.name)).toUpperCase();
 
-  // Si no tenemos cloudId en local pero sí un joinCode, buscar el registro existente
-  // en la nube (evita crear duplicados al "recuperar código" tras recargar).
-  if (!existingId && state.champ.joinCode) {
+  // Buscar SIEMPRE por joinCode antes de crear, para no generar duplicados
+  // (al recargar, entrar por código, o si el cloudId local se perdió).
+  if (!existingId) {
     const { data: found } = await sb.from("championships").select("id").eq("join_code", joinCode).maybeSingle();
     if (found?.id) existingId = found.id;
   }
@@ -206,7 +210,7 @@ async function upsertChampionship(sb, state) {
     join_code: joinCode,
     name: state.champ.name,
     scoring_mode: state.champ.scoringMode || "WL_ToT",
-    own_sail_no: state.fleet?.find(b => b.id === state.champ.ownId)?.sailNo || null,
+    own_sail_no: normSail(state.fleet?.find(b => b.id === state.champ.ownId)?.sailNo) || null,
     data: { mainUrl: state.champ.mainUrl, resultsUrl: state.champ.resultsUrl, docsUrl: state.champ.docsUrl,
             photosUrl: state.champ.photosUrl, entryListUrl: state.champ.entryListUrl, ownId: state.champ.ownId,
             discardEvery: state.champ.discardEvery ?? 4, discardMin: state.champ.discardMin ?? 4,
@@ -229,7 +233,7 @@ async function upsertChampionship(sb, state) {
 async function upsertBoats(sb, champId, fleet) {
   if (!fleet.length) return;
   const rows = fleet.map(b => ({
-    championship_id: champId, sail_no: b.sailNo || b.id, name: b.name, cls: b.cls,
+    championship_id: champId, sail_no: normSail(b.sailNo || b.id), name: b.name, cls: b.cls,
     boat_type: b.boatType, nation: b.nation, bow_num: String(b.bowNum ?? ""),
     gph: b.gpH ?? null, rating: b.rating ?? null, cert_no: b.certNo ?? null, valid_until: b.validUntil ?? null,
     color: b.color, hull_color: b.hullColor, main_color: b.mainColor, jib_color: b.jibColor, spi_color: b.spiColor,
@@ -255,7 +259,7 @@ async function upsertPassages(sb, champId, races) {
     const raceCloudId = await raceCloudIdFor(sb, champId, r.id);
     if (!raceCloudId) continue;
     for (const p of (r.passages || [])) {
-      rows.push({ championship_id: champId, race_id: raceCloudId, boat_sail_no: p.boatSailNo || p.boatId, leg: p.leg, real_time: p.realTime, device_id: p.deviceId || deviceId() });
+      rows.push({ championship_id: champId, race_id: raceCloudId, boat_sail_no: normSail(p.boatSailNo || p.boatId), leg: p.leg, real_time: p.realTime, device_id: p.deviceId || deviceId() });
     }
   }
   if (rows.length) await sb.from("passages").upsert(rows, { onConflict: "race_id,boat_sail_no,leg", ignoreDuplicates: true });
@@ -283,7 +287,7 @@ async function hydrate(sb, champ) {
     passages = data || [];
   }
   const byRaceCloud = {};
-  for (const p of passages) (byRaceCloud[p.race_id] ||= []).push({ boatSailNo: p.boat_sail_no, leg: p.leg, realTime: Number(p.real_time), deviceId: p.device_id });
+  for (const p of passages) (byRaceCloud[p.race_id] ||= []).push({ boatSailNo: normSail(p.boat_sail_no), leg: p.leg, realTime: Number(p.real_time), deviceId: p.device_id });
 
   const fleet = (boats || []).map(b => ({
     id: b.sail_no, sailNo: b.sail_no, name: b.name, cls: b.cls, boatType: b.boat_type, nation: b.nation,
