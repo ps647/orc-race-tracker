@@ -4693,8 +4693,14 @@ export default function App(){
         lastSaveTs.current = Date.now();
         setSync(true);
         const stateToSave = {...next, _champId:saveId, _deviceId:DEVICE_ID};
-        saveCh(saveId, stateToSave);
-        saveS(stateToSave).then(()=>setTimeout(()=>setSync(false),600));
+        saveCh(saveId, stateToSave).then(res=>{
+          // Fijar el código y el cloudId en el estado para que no se regeneren
+          if(res?.joinCode && res.joinCode!==next.champ?.joinCode){
+            setState(cur=>({...cur, _cloudId:res.cloudId||cur._cloudId, champ:{...cur.champ, joinCode:res.joinCode}}));
+          }
+          setTimeout(()=>setSync(false),600);
+        }).catch(()=>setSync(false));
+        saveS(stateToSave);
         const updatedIdx = champsRef.current.map(c=>c.id===saveId
           ? {...c, name:next.champ?.name||c.name, racesCount:next.races?.length||c.racesCount, fleetCount:next.fleet?.length||c.fleetCount}
           : c);
