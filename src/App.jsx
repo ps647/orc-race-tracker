@@ -4272,6 +4272,22 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
       <div style={{marginTop:16,padding:"10px 13px",background:CARD2,borderRadius:8,fontSize:10,color:T2,lineHeight:1.6}}>
         💡 <strong style={{color:T1}}>Multi-dispositivo:</strong> Abre este mismo artifact en otro móvil y comparte el estado en tiempo real.
       </div>
+
+      {/* Limpiar datos — siempre accesible */}
+      <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${BDR}`}}>
+        <Btn v={clearing?"Limpiando...":"🗑 Limpiar datos de este dispositivo"}
+          onClick={()=>setConfirm2({
+            msg:"¿Limpiar TODOS los datos guardados en ESTE dispositivo? (no borra la nube)",
+            onOk:()=>setTimeout(()=>setConfirm2({
+              msg:"⚠️ ÚLTIMA confirmación: esto borra todo lo local y no se puede deshacer.",
+              onOk:clearStorage
+            }),50)
+          })}
+          c="red" fw dis={clearing}/>
+        <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.5,textAlign:"center"}}>
+          Borra los campeonatos guardados en este móvil. Para volver a entrar, usa el código en Config → Nube.
+        </div>
+      </div>
     </div>
   );
 }
