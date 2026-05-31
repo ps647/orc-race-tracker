@@ -59,6 +59,39 @@ function ConfirmDialog({ msg, onOk, onCancel }) {
 const SK="orc-v7";
 const IDX_KEY="orc-champs-idx";
 const chKey = id=>`orc-ch-${id}`;
+
+// ── Matcher universal paso↔barco ────────────────────────────────────────────
+// Un "passage" puede venir de tres sitios con identificadores distintos:
+//   • Local recién creado:   tiene boatId (p.ej. "UR") y boatSailNo ("ESP-52801")
+//   • Sincronizado de nube:   SOLO tiene boatSailNo normalizado ("ESP52801"), sin boatId
+//   • Flota local vs nube:    el barco local tiene id "UR"; el hidratado tiene id "ESP52801"
+// Por eso comparar con p.boatId===b.id falla en el móvil que recibe la sincronización.
+// matchPB() casa por id directo O por nº de vela normalizado, cubriendo todos los casos.
+function matchPB(p, b){
+  if(!p || !b) return false;
+  if(p.boatId && (p.boatId===b.id)) return true;
+  const ns = cloud.normSail;
+  const bSail = ns(b.sailNo || b.id);
+  const pSail = ns(p.boatSailNo || p.boatId);
+  return !!bSail && bSail===pSail;
+}
+// Resuelve el id local del barco al que pertenece un paso (o null).
+function passageBoatId(p, fleet){
+  const b = fleet.find(x=>matchPB(p,x));
+  return b ? b.id : null;
+}
+// Normaliza una lista de passages para que TODOS tengan un boatId válido
+// según la flota actual. Se aplica al recibir datos (carga / realtime).
+function normalizePassages(races, fleet){
+  if(!Array.isArray(races)) return races;
+  return races.map(r=>({
+    ...r,
+    passages: (r.passages||[]).map(p=>{
+      const bid = passageBoatId(p, fleet);
+      return bid ? {...p, boatId:bid} : p;
+    }),
+  }));
+}
 const PHOTO_DB_KEY = "orc-boat-photos-v1"; // Base de datos compartida de fotos
 
 const lsGet = k=>{ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch{ return null; }};
@@ -436,7 +469,7 @@ function computeStd(passages,startTime,fleet,course,modeKey=DEFAULT_SCORING){
   const tws=course?.windKnots||14;
   const legType=n=>(n%3===1?"beat":n%3===2?"reach":"run"); // 1,4=ceñida 2,5=través 3,6=popa
   return fleet.map(b=>{
-    const done=passages.filter(p=>p.boatId===b.id).sort((a,z)=>z.leg-a.leg);
+    const done=passages.filter(p=>matchPB(p,b)).sort((a,z)=>z.leg-a.leg);
     if(!done.length||!startTime) return {b,ct:null,el:null,leg:0};
     const last=done[0], el=(last.realTime-startTime)/1000;
     let allowance=null;
@@ -1967,6 +2000,8 @@ function CloudSyncBlock({state, setState}){
     try{
       const loaded = await cloud.loadByCode(joinCode.trim().toUpperCase());
       if(!loaded){ setMsg("❌ No existe un campeonato con ese código"); setBusy(false); return; }
+      // Asegura que cada paso casa con la flota cargada (boatId resuelto por nº de vela)
+      loaded.races = normalizePassages(loaded.races, loaded.fleet);
       setState(loaded);
       setMsg(`✅ Entraste en "${loaded.champ.name}"`);
     }catch(e){ setMsg("❌ "+e.message); }
@@ -2160,7 +2195,7 @@ function TabEnVivo({state,setState,role="patron"}){
   const liveStandings = useMemo(()=>{
     if(!started||!activeRace) return [];
     const std = computeStd(passages, startTime, fleet, course, activeRace?.scoringMode||state.champ?.scoringMode||DEFAULT_SCORING);
-    return std.map((s,i)=>({...s, pos:s.ct!=null?i+1:null})).filter(s=>s.ct!=null||passages.some(p=>p.boatId===s.b?.id));
+    return std.map((s,i)=>({...s, pos:s.ct!=null?i+1:null})).filter(s=>s.ct!=null||passages.some(p=>matchPB(p,s.b)));
   },[passages, startTime, fleet, course, started]);
   const [voiceOn,    setVoiceOn]   = useState(false);
   const [heard,      setHeard]     = useState("");
@@ -4677,8 +4712,9 @@ export default function App(){
           setCurrentId(activeId);
           if (savedState?._champId && savedState._champId !== activeId) {
             const ch = await loadCh(activeId);
-            if (ch) setState(ch);
+            if (ch){ if(ch.races&&ch.fleet) ch.races=normalizePassages(ch.races,ch.fleet); setState(ch); }
           } else if (savedState) {
+            if(savedState.races&&savedState.fleet) savedState.races=normalizePassages(savedState.races,savedState.fleet);
             setState(savedState);
           }
           setTab(2); // ← datos existentes: ir directo a En Vivo
@@ -4803,7 +4839,26 @@ export default function App(){
       // Evitar pisar un cambio propio recién guardado
       if(Date.now()-lastSaveTs.current < 1500) return;
       const fresh = await cloud.loadByCloudId(cloudId);   // carga directa por cloudId
-      if(fresh) setState(prev=>({...fresh, _champId:prev._champId, _cloudId:cloudId}));
+      if(fresh) setState(prev=>{
+        // La flota de la nube usa el nº de vela como id y puede no traer ratings/curvas.
+        // Conservamos la flota local si ya tiene barcos con rating, y solo añadimos
+        // los que falten desde la nube. Así el scoring (que necesita gpH/curvas) no se rompe.
+        const localFleet = prev.fleet || [];
+        const cloudFleet = fresh.fleet || [];
+        const hasRatings = b => b && (b.gpH!=null || (Array.isArray(b.curves)&&b.curves.length));
+        let fleet;
+        if(localFleet.some(hasRatings)){
+          // Base = flota local; añade de la nube los que no existan (por nº de vela)
+          const seen = new Set(localFleet.map(b=>cloud.normSail(b.sailNo||b.id)));
+          const extra = cloudFleet.filter(b=>!seen.has(cloud.normSail(b.sailNo||b.id)));
+          fleet = [...localFleet, ...extra];
+        } else {
+          fleet = cloudFleet.length ? cloudFleet : localFleet;
+        }
+        // Reasignar boatId de cada paso al id local correcto (clave de la sincronización)
+        const races = normalizePassages(fresh.races, fleet);
+        return {...fresh, fleet, races, _champId:prev._champId, _cloudId:cloudId};
+      });
     });
     return unsub;
   },[ready, state?._cloudId, currentId, DEVICE_ID]);
@@ -4816,6 +4871,7 @@ export default function App(){
     // Cargar nuevo
     const ch = await loadCh(champId);
     const newState = ch || {...INIT, _champId:champId};
+    if(newState.races && newState.fleet) newState.races = normalizePassages(newState.races, newState.fleet);
     setState(newState);
     setCurrentId(champId);
     lastSaveTs.current = Date.now();
