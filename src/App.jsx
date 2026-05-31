@@ -4236,6 +4236,18 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
   const clearStorage = async()=>{
     setClearing(true);
     try{
+      // 1) Borrar de la NUBE todos los campeonatos guardados localmente (rompe el ciclo de re-subida)
+      if(cloud.isCloudEnabled()){
+        try{
+          const keys = Object.keys(localStorage).filter(k=>k.startsWith("orc-ch-"));
+          for(const k of keys){
+            try{ const cid = JSON.parse(localStorage.getItem(k))?._cloudId; if(cid) await cloud.deleteByCloudId(cid); }catch{}
+          }
+          // por si el estado activo tiene un cloudId no reflejado en las claves
+          if(state?._cloudId) await cloud.deleteByCloudId(state._cloudId);
+        }catch{}
+      }
+      // 2) Borrar TODO lo local
       localStorage.removeItem("orc-v7");
       localStorage.removeItem("orc-champs-idx");
       Object.keys(localStorage).filter(k=>k.startsWith("orc-ch-")).forEach(k=>localStorage.removeItem(k));
@@ -4318,17 +4330,17 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
 
       {/* Limpiar datos — siempre accesible */}
       <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${BDR}`}}>
-        <Btn v={clearing?"Limpiando...":"🗑 Limpiar datos de este dispositivo"}
+        <Btn v={clearing?"Limpiando...":"🗑 Limpiar TODO (este móvil + nube)"}
           onClick={()=>setConfirm2({
-            msg:"¿Limpiar TODOS los datos guardados en ESTE dispositivo? (no borra la nube)",
+            msg:"¿Borrar TODOS los campeonatos de este móvil Y de la nube? Afecta a todos los dispositivos.",
             onOk:()=>setTimeout(()=>setConfirm2({
-              msg:"⚠️ ÚLTIMA confirmación: esto borra todo lo local y no se puede deshacer.",
+              msg:"⚠️ ÚLTIMA confirmación: borra todo (local y nube) y no se puede deshacer.",
               onOk:clearStorage
             }),50)
           })}
           c="red" fw dis={clearing}/>
         <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.5,textAlign:"center"}}>
-          Borra los campeonatos guardados en este móvil. Para volver a entrar, usa el código en Config → Nube.
+          Borra los campeonatos de este móvil y también de la nube. Para empezar de cero limpio.
         </div>
       </div>
     </div>
