@@ -343,15 +343,23 @@ function parseVoiceInput(text, fleet) {
 const WINDS=[6,8,10,12,14,16,20];
 const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
 const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:"",scoringMode:"AP_ToD",discardEvery:4,discardMin:4},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
-// Genera los tramos según el nº de vueltas: Ceñida, Offset, Popa por vuelta + Llegada
+// Genera los tramos según el nº de vueltas.
+// Cada vuelta: Ceñida + Offset + Popa, EXCEPTO la última, que termina en Llegada
+// (tras el Offset se va directo a meta, sin bajar por popa hasta la puerta).
+// Ej. 2 vueltas: Ceñida1, Offset1, Popa1, Ceñida2, Offset2, Llegada.
 function buildLegs(vueltas=2){
   const legs=[]; let n=1;
   for(let v=1; v<=vueltas; v++){
-    legs.push({n:n++, mark:"Boya 1",   type:"beat",   label:`Ceñida ${v}`, col:"#d97706", kind:"beat"});
-    legs.push({n:n++, mark:"Offset",   type:"reach",  label:`Offset ${v}`, col:"#7c3aed", kind:"offset"});
-    legs.push({n:n++, mark:"Puerta",   type:"run",    label:`Popa ${v}`,   col:"#0891b2", kind:"run"});
+    const last = (v===vueltas);
+    legs.push({n:n++, mark:"Boya 1", type:"beat",  label:`Ceñida ${v}`, col:"#d97706", kind:"beat"});
+    legs.push({n:n++, mark:"Offset", type:"reach", label:`Offset ${v}`, col:"#7c3aed", kind:"offset"});
+    if(last){
+      // Última vuelta: del offset directo a meta.
+      legs.push({n:n++, mark:"Llegada", type:"finish", label:"Llegada", col:"#16a34a", kind:"finish"});
+    } else {
+      legs.push({n:n++, mark:"Puerta", type:"run", label:`Popa ${v}`, col:"#0891b2", kind:"run"});
+    }
   }
-  legs.push({n:n++, mark:"Llegada", type:"finish", label:"Llegada", col:"#16a34a", kind:"finish"});
   return legs;
 }
 // Tramos de una prueba (según course.vueltas; por defecto 2)
@@ -460,14 +468,28 @@ function vpp(b, tws, modeKey=DEFAULT_SCORING){
   if(i<0)return{beat:gpH,reach:+(gpH*.97).toFixed(1),run:gpH};
   return{beat:+(gpH*bi[i]).toFixed(1),reach:+(gpH*(.97+(bi[i]-.97)*.3)).toFixed(1),run:+(gpH*ri[i]).toFixed(1)};
 }
-function legDist(n,c){const r=Math.max(0.1,+(c.mark1Dist+c.mark1aDist-c.gateDist).toFixed(3));return[c.mark1Dist,c.mark1aDist,r,c.mark1Dist,c.mark1aDist,r][n-1]||c.mark1Dist;}
-function totalDist(c){return Array.from({length:6},(_,i)=>legDist(i+1,c)).reduce((a,b)=>a+b,0);}
+// Distancia en millas de un tramo según su TIPO (kind) y las distancias del recorrido.
+function legDistByKind(kind, c){
+  const m1=c?.mark1Dist??1.5, off=c?.mark1aDist??0.15, gate=c?.gateDist??0.3;
+  if(kind==="beat")   return m1;
+  if(kind==="offset") return Math.max(0.05, off);
+  if(kind==="run")    return Math.max(0.1, +(m1+off-gate).toFixed(3));
+  if(kind==="finish") return Math.max(0.1, +(m1+off-gate).toFixed(3)); // tras offset, bajada a meta ≈ popa
+  return m1;
+}
+// Distancia del tramo nº n de la prueba (según los legs reales del recorrido).
+function legDist(n,c){ const L=raceLegs(c).find(x=>x.n===n); return L?legDistByKind(L.kind,c):(c?.mark1Dist??1.5); }
+// Distancia total del recorrido (suma de todos los tramos reales).
+function totalDist(c){ return raceLegs(c).reduce((a,L)=>a+legDistByKind(L.kind,c),0); }
+// Ángulo náutico (para coger el allowance de la curva) según el tipo de tramo.
+function legAngle(kind){ return kind==="beat"?"beat":(kind==="run"||kind==="finish")?"run":"reach"; }
 // Corrección de tiempo (ToD) por tramo usando la curva real del certificado.
 // Cada tramo se corrige con el allowance del ángulo correspondiente al viento
 // de la regata; si no hay curva, cae al ToD efectivo × distancia (legacy).
 function computeStd(passages,startTime,fleet,course,modeKey=DEFAULT_SCORING){
   const tws=course?.windKnots||14;
-  const legType=n=>(n%3===1?"beat":n%3===2?"reach":"run"); // 1,4=ceñida 2,5=través 3,6=popa
+  const legsArr=raceLegs(course);
+  const kindOf=n=>{ const L=legsArr.find(x=>x.n===n); return L?legAngle(L.kind):"beat"; };
   return fleet.map(b=>{
     const done=passages.filter(p=>matchPB(p,b)).sort((a,z)=>z.leg-a.leg);
     if(!done.length||!startTime) return {b,ct:null,el:null,leg:0};
@@ -476,7 +498,7 @@ function computeStd(passages,startTime,fleet,course,modeKey=DEFAULT_SCORING){
     if(hasValidRating(b,modeKey)){
       const v=vpp(b,tws,modeKey);
       allowance=0;
-      for(let i=1;i<=last.leg;i++){ const a=v[legType(i)]; if(a==null){allowance=null;break;} allowance+=a*legDist(i,course); }
+      for(let i=1;i<=last.leg;i++){ const a=v[kindOf(i)]; if(a==null){allowance=null;break;} allowance+=a*legDist(i,course); }
       if(allowance==null){ // sin curva: usar ToD efectivo escalar
         const tod=ratingToD(b,tws,modeKey);
         allowance = tod!=null ? tod*Array.from({length:last.leg},(_,i)=>legDist(i+1,course)).reduce((a,x)=>a+x,0) : null;
@@ -1736,7 +1758,7 @@ function FleetPhotoSummary({fleet}){
 }
 
 function TabConfig({state,setState,race}){
-  const co=race.course;
+  const co=race?.course || DCOURSE;
   const [cfgTab, setCfgTab] = useState("flota"); // "flota" | "campeonato" | "fotos"
   const updCo=(k,v)=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?{...r,course:{...r.course,[k]:v}}:r)}));
   const updFleet=(id,k,v)=>setState(s=>({...s,fleet:s.fleet.map(b=>b.id===id?{...b,[k]:v}:b)}));
@@ -2230,8 +2252,9 @@ function TabEnVivo({state,setState,role="patron"}){
     return()=>clearInterval(id);
   },[started,finishedAt,passages.length,fleet.length,startTime]);
 
-  // Auto-stop cuando todos terminan
-  const allDone = fleet.every(b=>passages.some(p=>p.boatId===b.id&&p.leg===6));
+  // Auto-stop cuando todos terminan (la última boya = nº total de tramos del recorrido)
+  const finishLeg = raceLegs(course).length;
+  const allDone = fleet.every(b=>passages.some(p=>matchPB(p,b)&&p.leg===finishLeg));
   useEffect(()=>{
     if(allDone&&started&&!finishedAt&&passages.length){
       const lastT=Math.max(...passages.map(p=>p.realTime));
@@ -2291,11 +2314,11 @@ function TabEnVivo({state,setState,role="patron"}){
   // ── Variables derivadas ─────────────────────────────────────────────────
   const displayTime  = finishedAt?(finishedAt-startTime)/1000:startTime?Math.max(0,(now-startTime)/1000):0;
   const updRace      = fn=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?fn(r):r)}));
-  const boatLeg      = id=>passages.filter(p=>p.boatId===id).length;
+  const boatLeg      = id=>{ const b=fleet.find(x=>x.id===id); return passages.filter(p=>matchPB(p,b||{id})).length; };
   const record = (id, offsetSec=0, explicitTime=null)=>{
     if(isEspectador)return;
     const nl=boatLeg(id)+1;
-    if(nl>6||!started)return;
+    if(nl>raceLegs(course).length||!started)return;
     // explicitTime: tiempo exacto pasado directamente (evita problema async de setCopyFromId)
     const refTime = explicitTime!==null
       ? explicitTime + offsetSec*1000
@@ -2662,16 +2685,9 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
   if(!own) return <div style={{textAlign:"center",padding:"30px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:12}}>Configura tu barco en Config.</div>;
 
   // Tipo náutico de cada tramo para coger el allowance correcto de la curva.
-  const legType = kind => kind==="beat"?"beat":kind==="run"?"run":kind==="finish"?"run":"reach";
-  // Millas de cada tramo según las distancias configuradas del recorrido.
-  const distOfLeg = L=>{
-    const m1=course?.mark1Dist??1.5, off=course?.mark1aDist??0.15, gate=course?.gateDist??0.3;
-    if(L.kind==="beat")   return m1;
-    if(L.kind==="offset") return off;
-    if(L.kind==="run")    return Math.max(0.1, m1+off-gate);
-    if(L.kind==="finish") return Math.max(0.1, m1+off-gate);
-    return m1;
-  };
+  const legType = kind => legAngle(kind);
+  // Millas de cada tramo según las distancias configuradas del recorrido (helper compartido).
+  const distOfLeg = L => legDistByKind(L.kind, course);
 
   // Allowance ACUMULADO (segundos de corrección ORC) de un barco hasta el final
   // del tramo n incluido. Usa la curva real por ángulo (vpp); si no, ToD escalar.
@@ -2701,7 +2717,20 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
   };
 
   const fmt = sec => { const s=Math.round(sec); return (s>0?"+":"")+s+"s"; };
-  const compLegs = legs; // mostramos todas las boyas, incluido offset y llegada
+  const compLegs = legs; // mostramos todas las boyas del recorrido (según vueltas)
+  const lastN = compLegs.length ? compLegs[compLegs.length-1].n : 0;
+
+  // Rivales ordenados por la diferencia en la ÚLTIMA boya (llegada):
+  // primero los que MÁS te deben sacar (rojo, más rápidos), luego los que te dan tiempo.
+  const rivals = fleet.filter(b=>b.id!==ownId).map(b=>{
+    const fin = diffAtLeg(b, lastN);
+    return { b, fin };
+  }).sort((x,z)=>{
+    if(x.fin==null && z.fin==null) return 0;
+    if(x.fin==null) return 1;
+    if(z.fin==null) return -1;
+    return z.fin - x.fin; // mayor (te saca más) arriba
+  });
 
   return(
     <div>
@@ -2736,7 +2765,7 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
             {compLegs.map(L=><th key={L.n} style={{padding:"6px 4px",textAlign:"center",color:GLD,fontWeight:700,fontSize:9,whiteSpace:"nowrap"}}>{L.label}</th>)}
           </tr></thead>
           <tbody>
-            {fleet.filter(b=>b.id!==ownId).map(b=>{
+            {rivals.map(({b})=>{
               const noRating = ratingToD(b, refW, "WL_ToD")==null;
               return (
               <tr key={b.id}>
@@ -2750,9 +2779,10 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
                   if(d==null) return <td key={L.n} style={{padding:"5px 4px",textAlign:"center",color:T3,fontFamily:"monospace"}}>—</td>;
                   // d>0 → rival debe sacarte (rojo). d<0 → margen a tu favor (verde).
                   const col = d>0?RED:d<0?GRN:T2;
+                  const isFin = L.n===lastN;
                   return(
-                    <td key={L.n} style={{padding:"5px 4px",textAlign:"center",fontFamily:"monospace"}}>
-                      <span style={{fontSize:11,fontWeight:700,color:col}}>{fmt(d)}</span>
+                    <td key={L.n} style={{padding:"5px 4px",textAlign:"center",fontFamily:"monospace",background:isFin?`${GLD}11`:"transparent"}}>
+                      <span style={{fontSize:isFin?12:11,fontWeight:isFin?800:700,color:col}}>{fmt(d)}</span>
                     </td>
                   );
                 })}
@@ -2764,7 +2794,7 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
       </div>
       <div style={{fontSize:9,color:T3,textAlign:"center",padding:"8px 0",lineHeight:1.5}}>
         Cálculo teórico ORC (ToD a {refW} kt) según las distancias del recorrido.<br/>
-        Ej.: <b style={{color:RED}}>+18s</b> en Popa 1 = ese rival debe pasar esa boya 18s antes que tú para ir empatados.
+        Ordenado por la <b>Llegada</b> (resaltada): arriba quien más debe sacarte. <b style={{color:RED}}>+18s</b> = ese rival debe pasar esa boya 18s antes que tú para empatar.
       </div>
     </div>
   );
@@ -4457,8 +4487,10 @@ function TabRegatas({state, setState, race}){
             </div>
             <button onClick={()=>{
               const id=`r${state.races.length+1}_${Date.now()}`;
+              // Si no hay prueba previa (race null), usar el recorrido por defecto.
+              const baseCourse = race?.course || DCOURSE;
               setState(s=>({...s,
-                races:[...s.races,{id,name:`Prueba ${s.races.length+1}`,startTime:null,countdownAt:null,finishedAt:null,passages:[],course:{...race.course},discarded:false}],
+                races:[...s.races,{id,name:`Prueba ${s.races.length+1}`,startTime:null,countdownAt:null,finishedAt:null,passages:[],marks:[],course:{...baseCourse},discarded:false}],
                 activeRaceId:id
               }));
             }} style={{padding:"8px 16px",background:GRN,color:"#fff",borderRadius:8,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>
