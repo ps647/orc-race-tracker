@@ -2653,49 +2653,55 @@ function TabEnVivo({state,setState,role="patron"}){
   );
 }
 
-// ── COMPARATIVA EN VIVO: real vs compensado por tramo (ToD), respecto al barco propio ──
+// ── COMPARATIVA TEÓRICA (pre-regata): tiempo que cada rival debe sacarte / darte
+//    en cada boya, según rating ORC + distancia configurada + viento elegido.
+//    Respecto a TU barco. No usa tiempos reales: es la previsión objetivo.
 function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
   const [refW, setRefW] = useState(course?.windKnots||14);
   const own = fleet.find(b=>b.id===ownId) || fleet[0];
-  if(!startTime) return <div style={{textAlign:"center",padding:"30px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:12}}>La prueba no ha empezado.</div>;
   if(!own) return <div style={{textAlign:"center",padding:"30px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:12}}>Configura tu barco en Config.</div>;
 
-  // tramos sin offset para mostrar en la tabla
-  const compLegs = legs.filter(L=>L.kind!=="offset");
-
-  // millas de un tramo según su tipo (ceñida=boya1, offset, popa=boya1+offset-gate, llegada≈popa)
+  // Tipo náutico de cada tramo para coger el allowance correcto de la curva.
+  const legType = kind => kind==="beat"?"beat":kind==="run"?"run":kind==="finish"?"run":"reach";
+  // Millas de cada tramo según las distancias configuradas del recorrido.
   const distOfLeg = L=>{
     const m1=course?.mark1Dist??1.5, off=course?.mark1aDist??0.15, gate=course?.gateDist??0.3;
     if(L.kind==="beat")   return m1;
     if(L.kind==="offset") return off;
     if(L.kind==="run")    return Math.max(0.1, m1+off-gate);
-    if(L.kind==="finish") return Math.max(0.1, m1+off-gate); // tramo final ≈ popa
+    if(L.kind==="finish") return Math.max(0.1, m1+off-gate);
     return m1;
   };
-  // millas acumuladas desde salida hasta el final del tramo n (incluido)
-  const cumDist = n=>{
-    let d=0;
-    for(const L of legs){ d+=distOfLeg(L); if(L.n===n) break; }
-    return d;
+
+  // Allowance ACUMULADO (segundos de corrección ORC) de un barco hasta el final
+  // del tramo n incluido. Usa la curva real por ángulo (vpp); si no, ToD escalar.
+  const cumAllowance = (b, n)=>{
+    const v = vpp(b, refW, "WL_ToD");
+    let acc = 0;
+    for(const L of legs){
+      const a = v[legType(L.kind)];
+      const tod = a!=null ? a : ratingToD(b, refW, "WL_ToD");
+      if(tod==null) return null;          // sin rating: no se puede calcular
+      acc += tod * distOfLeg(L);
+      if(L.n===n) break;
+    }
+    return acc;
   };
 
-  // tiempo real (s desde salida) por barco y nº de tramo
-  const realT = {};
-  legs.forEach(L=>{ realT[L.n] = {};
-    fleet.forEach(b=>{ const sn=cloud.normSail(b.sailNo); const p = passages.find(x=>x.leg===L.n && (x.boatId===b.id || (sn&&cloud.normSail(x.boatSailNo)===sn) || cloud.normSail(x.boatSailNo)===cloud.normSail(b.id)));
-      if(p) realT[L.n][b.id] = (p.realTime-startTime)/1000; });
-  });
-
-  // tiempo COMPENSADO ToD = real − (ToD_s/milla × millas_acumuladas)
-  const compT = (b, legN)=>{
-    const real = realT[legN]?.[b.id]; if(real==null) return null;
-    const tod = ratingToD(b, refW, "WL_ToD");  // s/milla según viento (curva real)
-    if(tod==null) return real;                  // sin rating: sin corrección
-    return real - tod*cumDist(legN);
+  // Diferencia teórica en una boya: segundos que el RIVAL debe sacarte en tiempo
+  // REAL para empatar compensado.  delta = allowance_tú − allowance_rival.
+  //  · delta > 0  → tu barco recibe más corrección (eres más lento de rating):
+  //                 el rival DEBE llegar 'delta' s antes que tú → lo mostramos en rojo (te saca).
+  //  · delta < 0  → tú le das tiempo: el rival puede llegar |delta| s después y empatáis
+  //                 → verde (margen a tu favor).
+  const diffAtLeg = (rival, n)=>{
+    const aOwn = cumAllowance(own, n), aRiv = cumAllowance(rival, n);
+    if(aOwn==null || aRiv==null) return null;
+    return aOwn - aRiv;  // segundos que el rival debe sacarte en real
   };
 
-  const fmtDiff = sec => { const s=Math.round(sec); return s===0?"0s":(s<0?"":"+")+s+"s"; };
-  const winds = WINDS; // vientos del certificado
+  const fmt = sec => { const s=Math.round(sec); return (s>0?"+":"")+s+"s"; };
+  const compLegs = legs; // mostramos todas las boyas, incluido offset y llegada
 
   return(
     <div>
@@ -2703,26 +2709,22 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
         <span style={{fontSize:11,color:T2}}>Viento:</span>
         <select value={refW} onChange={e=>setRefW(+e.target.value)}
           style={{background:CARD2,color:T1,border:`1px solid ${BDR}`,borderRadius:7,padding:"6px 10px",fontSize:12,width:"auto"}}>
-          {winds.map(w=><option key={w} value={w}>{w} kt</option>)}
+          {WINDS.map(w=><option key={w} value={w}>{w} kt</option>)}
         </select>
+        <span style={{fontSize:10,color:T3}}>· {totalDist(course).toFixed(2)} M totales</span>
       </div>
       <div style={{fontSize:10,color:GLD,fontWeight:700,marginBottom:8}}>⭐ Referencia: {own.bowNum?own.bowNum+" ":""}{own.name}</div>
 
       {/* Leyenda */}
-      <div style={{background:CARD2,border:`1px solid ${BDR}`,borderRadius:9,padding:"9px 11px",marginBottom:10,display:"flex",flexDirection:"column",gap:6}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{minWidth:30,textAlign:"center",fontFamily:"monospace",fontWeight:800,fontSize:11,background:CARD,borderRadius:5,padding:"2px 4px",color:T1}}>12s</span>
-          <span style={{fontSize:10,color:T2,lineHeight:1.3}}><b>Arriba:</b> tiempo REAL — diferencia de paso por la boya respecto a tu barco</span>
+      <div style={{background:CARD2,border:`1px solid ${BDR}`,borderRadius:9,padding:"9px 11px",marginBottom:10,display:"flex",flexDirection:"column",gap:5}}>
+        <div style={{fontSize:10,color:T2,lineHeight:1.4}}>
+          Tiempo que <b>cada rival debe sacarte</b> (o que tú le das) en cada boya para empatar en compensado.
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{minWidth:30,textAlign:"center",fontFamily:"monospace",fontWeight:700,fontSize:10,background:CARD,borderRadius:5,padding:"2px 4px",color:T2}}>5s</span>
-          <span style={{fontSize:10,color:T2,lineHeight:1.3}}><b>Abajo:</b> tiempo COMPENSADO — corregido por distancia (ToD) y viento</span>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
           <span style={{width:11,height:11,borderRadius:"50%",background:RED,flexShrink:0}}/>
-          <span style={{fontSize:10,color:T2}}>Rojo = te sacó tiempo</span>
-          <span style={{width:11,height:11,borderRadius:"50%",background:GRN,flexShrink:0,marginLeft:10}}/>
-          <span style={{fontSize:10,color:T2}}>Verde = vas por delante</span>
+          <span style={{fontSize:10,color:T2}}>Rojo = te debe sacar (es más rápido de rating)</span>
+          <span style={{width:11,height:11,borderRadius:"50%",background:GRN,flexShrink:0,marginLeft:6}}/>
+          <span style={{fontSize:10,color:T2}}>Verde = le das tiempo (margen a tu favor)</span>
         </div>
       </div>
 
@@ -2734,35 +2736,35 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
             {compLegs.map(L=><th key={L.n} style={{padding:"6px 4px",textAlign:"center",color:GLD,fontWeight:700,fontSize:9,whiteSpace:"nowrap"}}>{L.label}</th>)}
           </tr></thead>
           <tbody>
-            {fleet.filter(b=>b.id!==ownId).map(b=>(
+            {fleet.filter(b=>b.id!==ownId).map(b=>{
+              const noRating = ratingToD(b, refW, "WL_ToD")==null;
+              return (
               <tr key={b.id}>
                 <td style={{padding:"5px 4px",textAlign:"left",fontWeight:700,fontSize:10,color:T1,whiteSpace:"nowrap"}}>
                   <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:b.color||T3,marginRight:4}}/>
                   {b.bowNum?b.bowNum+" ":""}{b.name}
                 </td>
                 {compLegs.map(L=>{
-                  const tOwn = realT[L.n]?.[ownId], tRiv = realT[L.n]?.[b.id];
-                  if(tOwn==null||tRiv==null) return <td key={L.n} style={{padding:"5px 4px",textAlign:"center",color:T3,fontFamily:"monospace"}}>—</td>;
-                  const realDiff = tRiv - tOwn;
-                  const cOwn = compT(own, L.n), cRiv = compT(b, L.n);
-                  const compDiff = (cRiv!=null&&cOwn!=null) ? (cRiv - cOwn) : null;
-                  const colR = realDiff<0?RED:realDiff>0?GRN:T2;
-                  const colC = compDiff==null?T3:compDiff<0?RED:compDiff>0?GRN:T2;
+                  if(noRating) return <td key={L.n} style={{padding:"5px 4px",textAlign:"center",color:T3,fontFamily:"monospace"}}>—</td>;
+                  const d = diffAtLeg(b, L.n);
+                  if(d==null) return <td key={L.n} style={{padding:"5px 4px",textAlign:"center",color:T3,fontFamily:"monospace"}}>—</td>;
+                  // d>0 → rival debe sacarte (rojo). d<0 → margen a tu favor (verde).
+                  const col = d>0?RED:d<0?GRN:T2;
                   return(
-                    <td key={L.n} style={{padding:"5px 4px",textAlign:"center",fontFamily:"monospace",lineHeight:1.35}}>
-                      <div style={{fontSize:11,fontWeight:700,color:colR}}>{fmtDiff(realDiff)}</div>
-                      <div style={{fontSize:10,color:colC}}>{compDiff==null?"—":fmtDiff(compDiff)}</div>
+                    <td key={L.n} style={{padding:"5px 4px",textAlign:"center",fontFamily:"monospace"}}>
+                      <span style={{fontSize:11,fontWeight:700,color:col}}>{fmt(d)}</span>
                     </td>
                   );
                 })}
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
       <div style={{fontSize:9,color:T3,textAlign:"center",padding:"8px 0",lineHeight:1.5}}>
-        Arriba real · abajo compensado por distancia (ToD del certificado ORC a {refW} kt).<br/>
-        Si en real te sacan 10s pero compensado solo 5s, su ventaja real es menor.
+        Cálculo teórico ORC (ToD a {refW} kt) según las distancias del recorrido.<br/>
+        Ej.: <b style={{color:RED}}>+18s</b> en Popa 1 = ese rival debe pasar esa boya 18s antes que tú para ir empatados.
       </div>
     </div>
   );
