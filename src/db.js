@@ -200,6 +200,48 @@ export async function clearRacePassages(state, raceLocalId) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
+// ── MARCAS SIN ASIGNAR (tabla "marks") ───────────────────────────────────────
+// Mismo patrón que passages: cada dispositivo añade/borra su marca sin pisar
+// las de los demás. Se sincronizan en tiempo real.
+
+// Registrar UNA marca de tiempo sin asignar.
+export async function recordMark(state, { raceLocalId, mark }) {
+  if (!isCloudEnabled()) return { ok: true, local: true };
+  try {
+    const sb = getClient();
+    const champId = lsGet(chKey(state._champId))?._cloudId || state._cloudId;
+    if (!champId || !mark?.id) return { ok: false };
+    const { error } = await sb.from("marks").upsert({
+      id: mark.id, championship_id: champId, race_local_id: raceLocalId,
+      mark_time: mark.time, device_id: deviceId(),
+    }, { onConflict: "id", ignoreDuplicates: true });
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+// Borrar UNA marca (al asignarla a un barco o al descartarla).
+export async function removeMark(state, markId) {
+  if (!isCloudEnabled() || !markId) return { ok: true, local: true };
+  try {
+    const sb = getClient();
+    const { error } = await sb.from("marks").delete().eq("id", markId);
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+// Borrar TODAS las marcas de una prueba (para "Limpiar todos").
+export async function clearRaceMarks(state, raceLocalId) {
+  if (!isCloudEnabled()) return { ok: true, local: true };
+  try {
+    const sb = getClient();
+    const champId = lsGet(chKey(state._champId))?._cloudId || state._cloudId;
+    if (!champId) return { ok: false };
+    const { error } = await sb.from("marks").delete()
+      .eq("championship_id", champId).eq("race_local_id", raceLocalId);
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 // ── Suscripción realtime ──────────────────────────────────────────────────────
 // onChange() se dispara con cada INSERT/UPDATE/DELETE en el campeonato.
 // Devuelve una función para desuscribirse.
@@ -211,6 +253,7 @@ export function subscribe(cloudId, onChange) {
     .on("postgres_changes", { event: "*", schema: "public", table: "passages", filter: `championship_id=eq.${cloudId}` }, p => onChange("passages", p))
     .on("postgres_changes", { event: "*", schema: "public", table: "races",    filter: `championship_id=eq.${cloudId}` }, p => onChange("races", p))
     .on("postgres_changes", { event: "*", schema: "public", table: "boats",    filter: `championship_id=eq.${cloudId}` }, p => onChange("boats", p))
+    .on("postgres_changes", { event: "*", schema: "public", table: "marks",    filter: `championship_id=eq.${cloudId}` }, p => onChange("marks", p))
     .subscribe();
   return () => { try { sb.removeChannel(ch); } catch {} };
 }
@@ -249,11 +292,7 @@ async function upsertChampionship(sb, state) {
             discardEvery: state.champ.discardEvery ?? 4, discardMin: state.champ.discardMin ?? 4,
             ndRaces: state.champ.ndRaces || [],
             orcStandings: state.champ.orcStandings || [], orcRaces: state.champ.orcRaces || [],
-            orcNumRaces: state.champ.orcNumRaces || 0, orcLastSync: state.champ.orcLastSync || null,
-            // Marcas de tiempo SIN asignar todavía, por prueba (local_id → [marks]).
-            // Se guardan aquí (en el JSON del campeonato) para que se sincronicen entre
-            // dispositivos sin necesidad de crear columnas/tablas nuevas en Supabase.
-            raceMarks: Object.fromEntries((state.races || []).map(r => [r.id, r.marks || []])) },
+            orcNumRaces: state.champ.orcNumRaces || 0, orcLastSync: state.champ.orcLastSync || null },
     updated_at: new Date().toISOString(),
   };
   if (existingId) {
@@ -326,18 +365,28 @@ async function hydrate(sb, champ) {
   const byRaceCloud = {};
   for (const p of passages) (byRaceCloud[p.race_id] ||= []).push({ boatSailNo: normSail(p.boat_sail_no), leg: p.leg, realTime: Number(p.real_time), deviceId: p.device_id });
 
+  // Marcas SIN asignar — desde su tabla propia (igual que passages), por race_local_id
+  let marksRows = [];
+  try {
+    const { data } = await sb.from("marks").select("*").eq("championship_id", champ.id);
+    marksRows = data || [];
+  } catch { marksRows = []; }
+  const byRaceMarks = {};
+  for (const m of marksRows) (byRaceMarks[m.race_local_id] ||= []).push({ id: m.id, time: Number(m.mark_time), deviceId: m.device_id });
+  // Orden estable por tiempo
+  for (const k in byRaceMarks) byRaceMarks[k].sort((a, z) => a.time - z.time);
+
   const fleet = (boats || []).map(b => ({
     id: b.sail_no, sailNo: b.sail_no, name: b.name, cls: b.cls, boatType: b.boat_type, nation: b.nation,
     bowNum: b.bow_num, gpH: b.gph != null ? Number(b.gph) : null, rating: b.rating, certNo: b.cert_no, validUntil: b.valid_until,
     color: b.color, hullColor: b.hull_color, mainColor: b.main_color, jibColor: b.jib_color, spiColor: b.spi_color,
     trimBandsMain: b.trim_bands_main, trimBandsJib: b.trim_bands_jib, trimBandsSpi: b.trim_bands_spi, own: b.is_own,
   }));
-  const raceMarks = champ.data?.raceMarks || {};
   const racesOut = (races || []).map(r => ({
     id: r.local_id, name: r.name, scoringMode: r.scoring_mode, startTime: r.start_time ? Number(r.start_time) : null,
     countdownAt: r.countdown_at ? Number(r.countdown_at) : null, finishedAt: r.finished_at ? Number(r.finished_at) : null,
     course: r.course, discarded: r.discarded, passages: byRaceCloud[r.id] || [],
-    marks: Array.isArray(raceMarks[r.local_id]) ? raceMarks[r.local_id] : [],
+    marks: byRaceMarks[r.local_id] || [],
   }));
   return {
     _champId: champ.id, _cloudId: champ.id,
