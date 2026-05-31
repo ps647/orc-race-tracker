@@ -249,7 +249,11 @@ async function upsertChampionship(sb, state) {
             discardEvery: state.champ.discardEvery ?? 4, discardMin: state.champ.discardMin ?? 4,
             ndRaces: state.champ.ndRaces || [],
             orcStandings: state.champ.orcStandings || [], orcRaces: state.champ.orcRaces || [],
-            orcNumRaces: state.champ.orcNumRaces || 0, orcLastSync: state.champ.orcLastSync || null },
+            orcNumRaces: state.champ.orcNumRaces || 0, orcLastSync: state.champ.orcLastSync || null,
+            // Marcas de tiempo SIN asignar todavía, por prueba (local_id → [marks]).
+            // Se guardan aquí (en el JSON del campeonato) para que se sincronicen entre
+            // dispositivos sin necesidad de crear columnas/tablas nuevas en Supabase.
+            raceMarks: Object.fromEntries((state.races || []).map(r => [r.id, r.marks || []])) },
     updated_at: new Date().toISOString(),
   };
   if (existingId) {
@@ -328,10 +332,12 @@ async function hydrate(sb, champ) {
     color: b.color, hullColor: b.hull_color, mainColor: b.main_color, jibColor: b.jib_color, spiColor: b.spi_color,
     trimBandsMain: b.trim_bands_main, trimBandsJib: b.trim_bands_jib, trimBandsSpi: b.trim_bands_spi, own: b.is_own,
   }));
+  const raceMarks = champ.data?.raceMarks || {};
   const racesOut = (races || []).map(r => ({
     id: r.local_id, name: r.name, scoringMode: r.scoring_mode, startTime: r.start_time ? Number(r.start_time) : null,
     countdownAt: r.countdown_at ? Number(r.countdown_at) : null, finishedAt: r.finished_at ? Number(r.finished_at) : null,
     course: r.course, discarded: r.discarded, passages: byRaceCloud[r.id] || [],
+    marks: Array.isArray(raceMarks[r.local_id]) ? raceMarks[r.local_id] : [],
   }));
   return {
     _champId: champ.id, _cloudId: champ.id,
