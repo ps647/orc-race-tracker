@@ -310,14 +310,21 @@ function parseVoiceInput(text, fleet) {
 const WINDS=[6,8,10,12,14,16,20];
 const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
 const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:"",scoringMode:"AP_ToD",discardEvery:4,discardMin:4},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
-const LEG_DEF=[
-  {n:1,mark:"Boya 1",   type:"beat", label:"Ceñida 1",    col:"#d97706"},
-  {n:2,mark:"Offset 1a",type:"reach",label:"Través 1",    col:"#7c3aed"},
-  {n:3,mark:"Puerta",   type:"run",  label:"Empopada 1",  col:"#0891b2"},
-  {n:4,mark:"Boya 1",   type:"beat", label:"Ceñida 2",    col:"#d97706"},
-  {n:5,mark:"Offset 1a",type:"reach",label:"Través 2",    col:"#7c3aed"},
-  {n:6,mark:"Llegada",  type:"run",  label:"Empopada→Fin",col:"#0891b2"},
-];
+// Genera los tramos según el nº de vueltas: Ceñida, Offset, Popa por vuelta + Llegada
+function buildLegs(vueltas=2){
+  const legs=[]; let n=1;
+  for(let v=1; v<=vueltas; v++){
+    legs.push({n:n++, mark:"Boya 1",   type:"beat",   label:`Ceñida ${v}`, col:"#d97706", kind:"beat"});
+    legs.push({n:n++, mark:"Offset",   type:"reach",  label:`Offset ${v}`, col:"#7c3aed", kind:"offset"});
+    legs.push({n:n++, mark:"Puerta",   type:"run",    label:`Popa ${v}`,   col:"#0891b2", kind:"run"});
+  }
+  legs.push({n:n++, mark:"Llegada", type:"finish", label:"Llegada", col:"#16a34a", kind:"finish"});
+  return legs;
+}
+// Tramos de una prueba (según course.vueltas; por defecto 2)
+function raceLegs(course){ return buildLegs(course?.vueltas||2); }
+const LEG_DEF=buildLegs(2);
+
 
 // ── TEMA: los tokens son CSS variables, así un único cambio de :root cambia
 // toda la app sin tocar los cientos de usos de ${CARD}, ${T2}, etc. ───────────
@@ -344,7 +351,7 @@ const THEME_VARS = `
   --t1:#0f1d2e; --t2:#3d5573; --t3:#7089a3;
   --acc:#1d4ed8; --grn:#047857; --red:#dc2626; --gld:#b45309; --cyn:#0e7490; --prp:#6d28d9;
 }`;
-const CSS=THEME_VARS+`*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}body,#root{background:${BG};color:${T1};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;height:100vh;overflow:hidden;transition:background .2s,color .2s}input,select{width:100%;color:${T1};background:${CARD2};border:1px solid ${BDR};border-radius:8px;padding:8px 10px;font-size:13px;outline:none}input:focus,select:focus{border-color:${ACC}}button{cursor:pointer;border:none;outline:none}button:active{transform:scale(.95)}::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:${BDR}}@keyframes pop{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}.pop{animation:pop .18s ease}`;
+const CSS=THEME_VARS+`*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}body,#root{background:${BG};color:${T1};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;height:100vh;height:100dvh;overflow:hidden;transition:background .2s,color .2s}input,select{width:100%;color:${T1};background:${CARD2};border:1px solid ${BDR};border-radius:8px;padding:8px 10px;font-size:13px;outline:none}input:focus,select:focus{border-color:${ACC}}button{cursor:pointer;border:none;outline:none}button:active{transform:scale(.95)}::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:${BDR}}@keyframes pop{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}.pop{animation:pop .18s ease}`;
 
 function ft(s,plus=false){if(s==null||isNaN(s))return"--:--";const g=s<0?"-":(plus&&s>0?"+":"");const a=Math.abs(Math.round(s));const h=Math.floor(a/3600),m=Math.floor((a%3600)/60),sc=a%60;return h>0?`${g}${h}:${String(m).padStart(2,"0")}:${String(sc).padStart(2,"0")}`:`${g}${String(m).padStart(2,"0")}:${String(sc).padStart(2,"0")}`;}
 
@@ -2020,6 +2027,63 @@ function CloudSyncBlock({state, setState}){
   );
 }
 
+// ── Asignación de una marca de tiempo a barco + boya ───────────────────────
+function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDelete}){
+  const [boatId, setBoatId] = useState(null);
+  const el = startTime ? Math.round((mark.time-startTime)/1000) : 0;
+  const mm = Math.floor(el/60), ss = el%60;
+  const hora = new Date(mark.time).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  const sortedFleet = [...fleet].sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
+  const nl = boatId ? nextLeg(boatId) : null;       // siguiente boya del barco elegido
+  const nlDef = nl ? legs[nl-1] : null;
+
+  return(
+    <div style={{background:CARD,border:`1px solid ${boatId?GRN:GLD}55`,borderRadius:10,padding:"10px 12px"}}>
+      {/* Cabecera: tiempo de la marca */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <div style={{width:26,height:26,borderRadius:6,background:GLD,color:"#000",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:12,flexShrink:0}}>{idx+1}</div>
+        <div style={{flex:1}}>
+          <div style={{fontFamily:"monospace",fontWeight:800,fontSize:16,color:T1}}>{mm}:{ss.toString().padStart(2,"0")}</div>
+          <div style={{fontSize:9,color:T3}}>{hora}</div>
+        </div>
+        <button onClick={onDelete} style={{padding:"6px 10px",borderRadius:6,background:`${RED}18`,color:RED,fontSize:13,border:"none",cursor:"pointer",flexShrink:0}}>🗑</button>
+      </div>
+
+      {/* Selector de barco */}
+      <div style={{fontSize:9,color:T2,marginBottom:4}}>¿Qué barco pasó?</div>
+      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+        {sortedFleet.map(b=>{
+          const bnl = nextLeg(b.id);
+          const finished = bnl===null;
+          return(
+            <button key={b.id} onClick={()=>!finished&&setBoatId(b.id)} disabled={finished} style={{
+              display:"flex",alignItems:"center",gap:4,padding:"5px 9px",borderRadius:14,fontSize:11,fontWeight:700,cursor:finished?"default":"pointer",opacity:finished?0.35:1,
+              background:boatId===b.id?b.color||ACC:CARD2, color:boatId===b.id?"#fff":T2, border:`1px solid ${boatId===b.id?(b.color||ACC):BDR}`}}>
+              <span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:b.color||T3}}/>
+              {b.bowNum?`${b.bowNum} `:""}{b.name}{finished?" ✓":""}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Siguiente boya automática */}
+      {boatId&&nlDef&&(
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:9,color:T2,marginBottom:4}}>Se registrará en:</div>
+          <span style={{display:"inline-block",padding:"6px 12px",borderRadius:14,fontSize:11,fontWeight:700,color:"#fff",background:nlDef.col}}>→ {nlDef.label}</span>
+        </div>
+      )}
+
+      {/* Confirmar */}
+      <button onClick={()=>boatId&&onAssign(boatId)} disabled={!boatId} style={{
+        width:"100%",padding:"10px 0",borderRadius:8,fontSize:12,fontWeight:800,border:"none",
+        background:boatId?GRN:CARD2, color:boatId?"#fff":T3, cursor:boatId?"pointer":"default"}}>
+        {boatId&&nlDef?`✓ Asignar a ${nlDef.label}`:"Elige el barco que pasó"}
+      </button>
+    </div>
+  );
+}
+
 function TabEnVivo({state,setState,role="patron"}){
   // ── Extraer datos del estado PRIMERO (antes de cualquier hook) ──────────
   // Esto evita el error "Cannot access X before initialization" (TDZ)
@@ -2038,7 +2102,7 @@ function TabEnVivo({state,setState,role="patron"}){
   // ── HOOKS — siempre en el mismo orden, antes de cualquier return ────────
   const [now,        setNow]       = useState(Date.now());
   const [pend,       setPend]      = useState(null);
-  const [sub,        setSub]       = useState("map");
+  const [sub,        setSub]       = useState("crono");
   const [copyFrom,   setCopyFrom]  = useState(null); // {boatId, time} para copiar tiempo
   const [liveNow,    setLiveNow]   = useState(Date.now()); // tick para animación
 
@@ -2168,6 +2232,34 @@ function TabEnVivo({state,setState,role="patron"}){
     updRace(r=>({...r,passages:r.passages.map(p=>p.boatId===boatId&&p.leg===legN?{...p,realTime:p.realTime+deltaMs}:p)}));
   };
   const undo         = ()=>updRace(r=>({...r,passages:r.passages.slice(0,-1),finishedAt:null}));
+
+  // ── MARCAS RÁPIDAS: capturar tiempo ahora, asignar barco+boya después ──
+  const legs = raceLegs(course);            // tramos de esta prueba (según vueltas)
+  const marks = activeRace?.marks || [];
+  // siguiente boya que le toca a un barco = nº de pasos que ya tiene + 1
+  const nextLeg = boatId => {
+    const n = passages.filter(p=>p.boatId===boatId).length;
+    return n < legs.length ? n+1 : null;
+  };
+  const addMark = ()=>{
+    if(!started) return;
+    updRace(r=>({...r, marks:[...(r.marks||[]), {id:`m${Date.now()}`, time:Date.now()}]}));
+  };
+  const deleteMark = mid => updRace(r=>({...r, marks:(r.marks||[]).filter(m=>m.id!==mid)}));
+  // asignar una marca a un barco → se registra en su SIGUIENTE boya automáticamente
+  const assignMark = (mid, boatId)=>{
+    updRace(r=>{
+      const mark = (r.marks||[]).find(m=>m.id===mid);
+      if(!mark) return r;
+      const done = r.passages.filter(p=>p.boatId===boatId).length;
+      const leg = done+1;
+      if(leg > legs.length) return r; // ya llegó
+      const passages = [...r.passages, {boatId, leg, realTime:mark.time, by:role}];
+      const remaining = (r.marks||[]).filter(m=>m.id!==mid);
+      return {...r, passages, marks:remaining};
+    });
+  };
+
   const race         = activeRace; // alias para el resto del JSX
   const ldr          = standings.find(r=>r.ct!=null);
   const ownSt        = standings.find(r=>r.b.id===ownId);
@@ -2322,172 +2414,122 @@ function TabEnVivo({state,setState,role="patron"}){
           </div>
         </div>
 
-        {/* Estado del micrófono */}
-        {started&&!allDone&&(
-          <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 8px",background:voiceOn?"#001a00":CARD2,borderRadius:6,marginBottom:4,border:`1px solid ${voiceOn?GRN:T3}`}}>
-            <span style={{fontSize:11}}>{voiceOn?"🎙":"🎤"}</span>
-            <span style={{flex:1,fontSize:10,color:voiceOn?GRN:T2}}>
-              {voiceOn ? (heard?`«${heard}»`:"Escuchando... di el número de proa") : "Voz desactivada"}
-            </span>
-            <span style={{fontSize:9,color:T2}}>di "siete" o "7"</span>
-          </div>
-        )}
-
         {/* Info de rol para no-patrón */}
         {role!=="patron"&&(
           <div style={{padding:"4px 8px",background:role==="espectador"?`${T3}`:role==="barlovento"?`${GRN}22`:`${CYN}22`,borderRadius:6,marginBottom:4,fontSize:10,color:role==="espectador"?T2:role==="barlovento"?GRN:CYN,fontWeight:700}}>
-            {role==="barlovento"&&`⬆️ Boya 1 Barlovento — mostrando ${filteredFleet.length} barcos que se dirigen a tu boya`}
-            {role==="sotavento" &&`⬇️ Puerta 4s/4p — mostrando ${filteredFleet.length} barcos que se dirigen a tu boya`}
             {role==="espectador"&&"👁️ Modo espectador — solo lectura"}
-          </div>
-        )}
-        {/* Selector rápido de cuenta atrás — solo en pre-salida */}
-        {!started&&!countdownAt&&(
-          <div style={{marginBottom:6}}>
-            <div style={{fontSize:9,color:T2,marginBottom:4}}>Cuenta atrás:</div>
-            <div style={{display:"flex",gap:4,marginBottom:6}}>
-              {[1,2,3,4,5].map(m=>(
-                <button key={m} onClick={()=>updRace(r=>({...r,course:{...r.course,countdownMin:m}}))}
-                  style={{flex:1,padding:"6px 0",background:course.countdownMin===m?GLD:CARD2,color:course.countdownMin===m?"#000":T2,borderRadius:7,fontSize:11,fontWeight:700,border:`1px solid ${course.countdownMin===m?GLD:BDR}`}}>
-                  {m}′
-                </button>
-              ))}
-            </div>
-            <div style={{display:"flex",gap:5}}>
-              <Btn v={`⏱ ${course.countdownMin}m`} onClick={()=>updRace(r=>({...r,countdownAt:Date.now()+r.course.countdownMin*60000}))} c="gld" lg/>
-              <Btn v="Ya 🚀" onClick={()=>updRace(r=>({...r,startTime:Date.now(),countdownAt:null}))} c="grn" sm/>
-            </div>
           </div>
         )}
 
         <div style={{display:"flex",gap:4,marginTop:4}}>
-          <div style={{display:"flex",gap:4,flex:1}}>
-            {[["boya","# Proa"],["tiempos","⏱ Tiempos"],["map","🗺 Mapa"],["std","📊 Clasi"]].map(([k,l])=>(
-              <button key={k} onClick={()=>setSub(k)} style={{flex:1,padding:"5px 3px",borderRadius:6,fontSize:11,fontWeight:700,background:sub===k?ACC:CARD2,color:sub===k?"#fff":T2,border:`1px solid ${sub===k?ACC:BDR}`}}>{l}</button>
+          <div style={{display:"flex",gap:4,flex:1,flexWrap:"wrap"}}>
+            {[["crono","⏱ Crono"],["asignar","📝 Asignar"],["std","📊 Clasi"],["comp","📋 Comparativa"]].map(([k,l])=>(
+              <button key={k} onClick={()=>setSub(k)} style={{flex:1,minWidth:64,padding:"5px 3px",borderRadius:6,fontSize:10,fontWeight:700,background:sub===k?ACC:CARD2,color:sub===k?"#fff":T2,border:`1px solid ${sub===k?ACC:BDR}`}}>{l}</button>
             ))}
           </div>
-        </div>
-        <div style={{display:"flex",gap:4,marginTop:4}}>
-          {started&&<Btn v="⏹ Parar" onClick={()=>setConfirm({msg:"¿Parar la prueba?",onOk:()=>updRace(r=>({...r,startTime:null,countdownAt:null}))})} c="red" sm/>}
-          <Btn v="↺ Reset" onClick={()=>setConfirm({msg:"¿Reiniciar? Se borran todos los pasos.",onOk:()=>updRace(r=>({...r,startTime:null,countdownAt:null,finishedAt:null,passages:[]}))})} c="dim" sm/>
-          <Btn v="🗑" onClick={()=>setConfirm({msg:`¿Eliminar "${race.name}"?`,onOk:()=>setState(s=>{const rem=s.races.filter(r=>r.id!==s.activeRaceId);return{...s,races:rem.length?rem:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:s.races[0]?.course||DCOURSE,discarded:false}],activeRaceId:rem[0]?.id||"r1"};})})} c="dim" sm st={{color:RED}}/>
         </div>
       </div>
 
       <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
+        {/* Botón flotante de marcar tiempo — visible en TODAS las sub-pestañas durante la regata */}
+        {started&&(
+          <div style={{position:"sticky",top:0,zIndex:30,paddingBottom:8,background:`linear-gradient(to bottom, ${BG} 70%, transparent)`}}>
+            <button onClick={addMark} style={{width:"100%",padding:"18px 0",borderRadius:14,background:ACC,color:"#fff",fontSize:19,fontWeight:900,border:"none",cursor:"pointer",boxShadow:`0 4px 16px ${ACC}66`,letterSpacing:.5}}>
+              ⏱ MARCAR TIEMPO{marks.length>0?<span style={{display:"inline-block",background:GLD,color:"#000",borderRadius:10,padding:"1px 8px",fontSize:13,marginLeft:6}}>{marks.length}</span>:""}
+            </button>
+          </div>
+        )}
 
 
         {/* ── BARCOS POR BOYA — toque directo, sin confirmación ────── */}
-        {sub==="boya"&&(
-          <div>
-            {/* Banner de modo "copiar tiempo" */}
-            {copyFromId&&(()=>{
-              const cb = fleet.find(b=>b.id===copyFromId);
-              return(
-                <div style={{display:"flex",alignItems:"center",gap:7,padding:"8px 10px",background:`${GLD}22`,border:`1px solid ${GLD}`,borderRadius:8,marginBottom:8}}>
-                  <span style={{fontSize:14}}>⏱</span>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:10,fontWeight:700,color:GLD}}>Modo: copiar tiempo de {cb?.name}</div>
-                    <div style={{fontSize:9,color:T2}}>Toca un barco para registrarlo con el mismo tiempo · Toca aquí para cancelar</div>
-                  </div>
-                  <button onClick={()=>setCopyFromId(null)} style={{padding:"4px 8px",background:T3,color:"#fff",borderRadius:5,fontSize:10,border:"none"}}>✕</button>
-                </div>
-              );
-            })()}
-            {boyaGroups.map(([legKey,boats])=>{
-              const lIdx = legKey==="fin" ? 6 : Number(legKey);
-              const li   = lIdx<6 ? LEG_DEF[lIdx] : null;
-              const fin  = legKey==="fin";
-              return(
-                <div key={legKey} style={{marginBottom:10}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5,padding:"3px 8px",background:fin?`${GRN}22`:`${li?.col||T3}22`,borderRadius:6,border:`1px solid ${fin?GRN:li?.col||T3}44`}}>
-                    <span style={{fontSize:11}}>{fin?"🏁":li?.type==="beat"?"⬆️":li?.type==="run"?"⬇️":"↗️"}</span>
-                    <span style={{fontSize:10,fontWeight:700,color:fin?GRN:li?.col||T1}}>
-                      {fin?"TERMINADOS":lIdx===0?"Línea de salida":`→ ${li?.mark} · ${li?.label}`}
-                    </span>
-                    <span style={{fontSize:9,color:T2,marginLeft:"auto"}}>{boats.length}b</span>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
-                    {boats.map(({b,lc})=>{
-                      const dbEntry = photoDb[b.sailNo||b.id]||{};
-                      const localBeat = loadLocalPhoto(b.sailNo||b.id,"beat");
-                      const localRun  = loadLocalPhoto(b.sailNo||b.id,"run");
-                      const photo = li?.type==="run"
-                        ? (localRun||dbEntry.run||b.photoUrlRun||null)
-                        : (localBeat||dbEntry.beat||b.photoUrlBeat||null);
-                      const canRec = started&&!fin&&!isEspectador;
-                      const tc = isDark(b.hullColor||b.color)?"#fff":"#000";
-                      const lastPass = passages.filter(p=>p.boatId===b.id).sort((a,z)=>z.leg-a.leg)[0];
-                      return(
-                        <div key={b.id} style={{borderRadius:9,overflow:"visible",display:"flex",flexDirection:"column"}}>
-                          <button onClick={()=>{ if(canRec) record(b.id); }}
-                            style={{borderRadius:9,overflow:"hidden",border:`2px solid ${fin?`${GRN}88`:copyFromId===b.id?GLD:b.hullColor||b.color}`,background:CARD,cursor:canRec?"pointer":"default",padding:0,display:"flex",flexDirection:"column"}}>
-                            <div style={{width:"100%",height:55,position:"relative",background:CARD2,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                              {photo
-                                ?<img src={photo} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={b.name}/>
-                                :<BoatIcon b={{...b,trimBands:b.trimBandsMain||b.trimBands||[]}} size={48}/>
-                              }
-                              <div style={{position:"absolute",top:2,left:2,width:20,height:20,borderRadius:4,background:b.hullColor||b.color,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                <span style={{fontSize:10,fontWeight:900,color:tc}}>{b.bowNum||"?"}</span>
-                              </div>
-                              {fin&&<div style={{position:"absolute",top:2,right:2,fontSize:12}}>✓</div>}
-                            </div>
-                            <div style={{padding:"2px 4px",background:b.hullColor||b.color,textAlign:"center"}}>
-                              <div style={{fontSize:7,fontWeight:700,color:tc,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.name}</div>
-                            </div>
-                          </button>
-                          {/* Botones de copiar tiempo y offset — solo si ha pasado alguna boya */}
-                          {!isEspectador&&lastPass&&(
-                            <div style={{display:"flex",gap:2,marginTop:2}}>
-                              <button onClick={()=>setCopyFromId(b.id===copyFromId?null:b.id)}
-                                title="Copiar tiempo a otro barco"
-                                style={{flex:1,padding:"2px 0",background:copyFromId===b.id?GLD:CARD2,color:copyFromId===b.id?"#000":T2,borderRadius:4,fontSize:8,border:`1px solid ${BDR}`,cursor:"pointer"}}>⏱</button>
-                              <button onClick={()=>adjustPassage(b.id,lastPass.leg,-3000)} title="-3s"
-                                style={{flex:1,padding:"2px 0",background:CARD2,color:T2,borderRadius:4,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>-3s</button>
-                              <button onClick={()=>adjustPassage(b.id,lastPass.leg,-1000)} title="-1s"
-                                style={{flex:1,padding:"2px 0",background:CARD2,color:T2,borderRadius:4,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>-1s</button>
-                              <button onClick={()=>adjustPassage(b.id,lastPass.leg,1000)} title="+1s"
-                                style={{flex:1,padding:"2px 0",background:CARD2,color:T2,borderRadius:4,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>+1s</button>
-                              <button onClick={()=>adjustPassage(b.id,lastPass.leg,3000)} title="+3s"
-                                style={{flex:1,padding:"2px 0",background:CARD2,color:T2,borderRadius:4,fontSize:7,border:`1px solid ${BDR}`,cursor:"pointer"}}>+3s</button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-            <div style={{padding:"6px 8px",background:CARD2,borderRadius:7,fontSize:9,color:T2,lineHeight:1.5}}>
-              💡 Toca <strong style={{color:T1}}>una sola vez</strong> para registrar paso · ↩ para deshacer
+        {/* ── ⏱ CRONÓMETRO + MARCAR TIEMPO (vista principal en regata) ──── */}
+        {sub==="crono"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12,alignItems:"center",paddingTop:8}}>
+            {/* Cronómetro grande */}
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:13,color:T2,marginBottom:2}}>{started?"⛵ En regata":"Cuenta atrás / salida"}</div>
+              <div style={{fontFamily:"monospace",fontWeight:900,fontSize:54,lineHeight:1,color:started?GRN:T1}}>
+                {(()=>{
+                  if(started){const s=Math.floor((now-startTime)/1000);const m=Math.floor(s/60),sc=s%60,h=Math.floor(m/60);return `${h>0?h+":":""}${(m%60).toString().padStart(2,"0")}:${sc.toString().padStart(2,"0")}`;}
+                  if(countdownAt){const s=Math.ceil((countdownAt-now)/1000);if(s>0){const m=Math.floor(s/60),sc=s%60;return `-${m}:${sc.toString().padStart(2,"0")}`;}}
+                  return "00:00";
+                })()}
+              </div>
             </div>
+
+            {/* Controles de salida (solo antes de empezar; el botón de marcar es flotante) */}
+            {!started && (
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"center"}}>
+                {[1,2,3,4,5].map(m=>(
+                  <Btn key={m} v={`${m}'`} onClick={()=>updRace(r=>({...r,countdownAt:Date.now()+m*60000,startTime:null,finishedAt:null}))} c="dim"/>
+                ))}
+                <Btn v="🚀 SALIDA YA" onClick={()=>updRace(r=>({...r,startTime:Date.now(),countdownAt:null}))} c="grn"/>
+              </div>
+            )}
+
+            {/* Contador de marcas sin asignar */}
+            {started&&(
+              <div style={{textAlign:"center",fontSize:13,color:T2}}>
+                {marks.length>0
+                  ? <><b style={{color:GLD,fontSize:18}}>{marks.length}</b> marca{marks.length!==1?"s":""} sin asignar — ve a <b style={{color:ACC}}>📝 Asignar</b></>
+                  : "Usa el botón ⏱ de arriba cada vez que pasa un barco"}
+              </div>
+            )}
+
+            {/* Controles de parar/reset */}
+            {started&&(
+              <div style={{display:"flex",gap:6,marginTop:4}}>
+                <Btn v="⏹ Parar" onClick={()=>setConfirm({msg:"¿Parar la prueba?",onOk:()=>updRace(r=>({...r,startTime:null,countdownAt:null}))})} c="red" sm/>
+              </div>
+            )}
           </div>
         )}
 
-
-        {/* ── MAPA ───────────────────────────────────────────────────── */}
-        {sub==="map"&&(
+        {/* ── 📝 ASIGNAR: dar barco + boya a cada marca de tiempo ──────────── */}
+        {sub==="asignar"&&(
           <div>
-            <CourseDiagram
-              course={course} passages={passages} fleet={fleet}
-              started={started} onTap={id=>{if(started&&!isEspectador)record(id);}}
-              legRank={computedLegRank} boatProg={boatProg}/>
+            {marks.length===0 ? (
+              <div style={{textAlign:"center",padding:"30px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:12,lineHeight:1.6}}>
+                No hay marcas pendientes.<br/>
+                <span style={{fontSize:10,color:T3}}>Ve a ⏱ Cronómetro y toca MARCAR TIEMPO cuando pase un barco.</span>
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{fontSize:11,color:T2,marginBottom:2}}>Asigna a cada tiempo su barco y boya. {marks.length} pendiente{marks.length!==1?"s":""}.</div>
+                {marks.map((m,idx)=>(
+                  <MarkAssign key={m.id} mark={m} idx={idx} fleet={fleet} startTime={startTime}
+                    legs={legs} nextLeg={nextLeg}
+                    onAssign={(boatId)=>assignMark(m.id,boatId)} onDelete={()=>deleteMark(m.id)}/>
+                ))}
+              </div>
+            )}
+
+            {/* Tiempos ya asignados (resumen, para editar/borrar) */}
+            {passages.length>0&&(
+              <div style={{marginTop:16}}>
+                <div style={{fontSize:11,color:T2,fontWeight:700,marginBottom:6}}>✅ Tiempos asignados ({passages.length})</div>
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  {[...passages].sort((a,z)=>z.realTime-a.realTime).map((p,i)=>{
+                    const b=fleet.find(x=>x.id===p.boatId);
+                    const el=Math.round((p.realTime-startTime)/1000);const mm=Math.floor(el/60),ss=el%60;
+                    return(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:CARD2,borderRadius:7}}>
+                        <div style={{width:8,height:24,borderRadius:2,background:b?.color||BDR,flexShrink:0}}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:11,fontWeight:700,color:T1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b?.name||p.boatId}</div>
+                          <div style={{fontSize:9,color:T2}}>{legs[p.leg-1]?.label||`Boya ${p.leg}`} · {mm}:{ss.toString().padStart(2,"0")}</div>
+                        </div>
+                        <button onClick={()=>setConfirm({msg:`¿Borrar el paso de ${b?.name||"este barco"}?`,onOk:()=>updRace(r=>({...r,passages:r.passages.filter(x=>!(x.boatId===p.boatId&&x.leg===p.leg&&x.realTime===p.realTime))}))})}
+                          style={{padding:"4px 8px",borderRadius:5,background:`${RED}18`,color:RED,fontSize:11,border:"none",cursor:"pointer",flexShrink:0}}>🗑</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
-        {/* ── ⏱ TABLA DE TIEMPOS POR BOYA ─────────────────────────────────── */}
-        {sub==="tiempos"&&(
-          <TimingTable
-            passages={passages} fleet={[...fleet].sort((a,b)=>(a.bowNum||99)-(b.bowNum||99))}
-            startTime={startTime} course={course}
-            copyFromId={copyFromId} setCopyFromId={setCopyFromId}
-            onAdjust={adjustPassage} isEspectador={isEspectador}
-            record={record}
-            onCopyAndRecord={(refBoatId,targetBoatId,offsetSec)=>{
-              const refPass = passages.filter(p=>p.boatId===refBoatId).sort((a,z)=>z.leg-a.leg)[0];
-              if(refPass) record(targetBoatId, offsetSec);
-            }}/>
-        )}
+
 
         {/* ── 📊 CLASIFICACIÓN EN TIEMPO REAL ─────────────────────────────── */}
         {sub==="std"&&(
@@ -2496,6 +2538,127 @@ function TabEnVivo({state,setState,role="patron"}){
             fleet={fleet} course={course} own={own} ownSt={ownSt}
             state={state} activeRace={activeRace} passages={passages} startTime={startTime}/>
         )}
+
+        {sub==="comp"&&(
+          <LiveComparativa
+            fleet={fleet} passages={passages} startTime={startTime}
+            legs={legs} ownId={ownId} course={course}/>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── COMPARATIVA EN VIVO: real vs compensado por tramo (ToD), respecto al barco propio ──
+function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
+  const [refW, setRefW] = useState(course?.windKnots||14);
+  const own = fleet.find(b=>b.id===ownId) || fleet[0];
+  if(!startTime) return <div style={{textAlign:"center",padding:"30px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:12}}>La prueba no ha empezado.</div>;
+  if(!own) return <div style={{textAlign:"center",padding:"30px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:12}}>Configura tu barco en Config.</div>;
+
+  // tramos sin offset para mostrar en la tabla
+  const compLegs = legs.filter(L=>L.kind!=="offset");
+
+  // millas de un tramo según su tipo (ceñida=boya1, offset, popa=boya1+offset-gate, llegada≈popa)
+  const distOfLeg = L=>{
+    const m1=course?.mark1Dist??1.5, off=course?.mark1aDist??0.15, gate=course?.gateDist??0.3;
+    if(L.kind==="beat")   return m1;
+    if(L.kind==="offset") return off;
+    if(L.kind==="run")    return Math.max(0.1, m1+off-gate);
+    if(L.kind==="finish") return Math.max(0.1, m1+off-gate); // tramo final ≈ popa
+    return m1;
+  };
+  // millas acumuladas desde salida hasta el final del tramo n (incluido)
+  const cumDist = n=>{
+    let d=0;
+    for(const L of legs){ d+=distOfLeg(L); if(L.n===n) break; }
+    return d;
+  };
+
+  // tiempo real (s desde salida) por barco y nº de tramo
+  const realT = {};
+  legs.forEach(L=>{ realT[L.n] = {};
+    fleet.forEach(b=>{ const p = passages.find(x=>x.boatId===b.id && x.leg===L.n);
+      if(p) realT[L.n][b.id] = (p.realTime-startTime)/1000; });
+  });
+
+  // tiempo COMPENSADO ToD = real − (ToD_s/milla × millas_acumuladas)
+  const compT = (b, legN)=>{
+    const real = realT[legN]?.[b.id]; if(real==null) return null;
+    const tod = ratingToD(b, refW, "WL_ToD");  // s/milla según viento (curva real)
+    if(tod==null) return real;                  // sin rating: sin corrección
+    return real - tod*cumDist(legN);
+  };
+
+  const fmtDiff = sec => { const s=Math.round(sec); return s===0?"0s":(s<0?"":"+")+s+"s"; };
+  const winds = WINDS; // vientos del certificado
+
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <span style={{fontSize:11,color:T2}}>Viento:</span>
+        <select value={refW} onChange={e=>setRefW(+e.target.value)}
+          style={{background:CARD2,color:T1,border:`1px solid ${BDR}`,borderRadius:7,padding:"6px 10px",fontSize:12,width:"auto"}}>
+          {winds.map(w=><option key={w} value={w}>{w} kt</option>)}
+        </select>
+      </div>
+      <div style={{fontSize:10,color:GLD,fontWeight:700,marginBottom:8}}>⭐ Referencia: {own.bowNum?own.bowNum+" ":""}{own.name}</div>
+
+      {/* Leyenda */}
+      <div style={{background:CARD2,border:`1px solid ${BDR}`,borderRadius:9,padding:"9px 11px",marginBottom:10,display:"flex",flexDirection:"column",gap:6}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{minWidth:30,textAlign:"center",fontFamily:"monospace",fontWeight:800,fontSize:11,background:CARD,borderRadius:5,padding:"2px 4px",color:T1}}>12s</span>
+          <span style={{fontSize:10,color:T2,lineHeight:1.3}}><b>Arriba:</b> tiempo REAL — diferencia de paso por la boya respecto a tu barco</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{minWidth:30,textAlign:"center",fontFamily:"monospace",fontWeight:700,fontSize:10,background:CARD,borderRadius:5,padding:"2px 4px",color:T2}}>5s</span>
+          <span style={{fontSize:10,color:T2,lineHeight:1.3}}><b>Abajo:</b> tiempo COMPENSADO — corregido por distancia (ToD) y viento</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{width:11,height:11,borderRadius:"50%",background:RED,flexShrink:0}}/>
+          <span style={{fontSize:10,color:T2}}>Rojo = te sacó tiempo</span>
+          <span style={{width:11,height:11,borderRadius:"50%",background:GRN,flexShrink:0,marginLeft:10}}/>
+          <span style={{fontSize:10,color:T2}}>Verde = vas por delante</span>
+        </div>
+      </div>
+
+      {/* Tabla */}
+      <div style={{background:CARD,border:`1px solid ${BDR}`,borderRadius:10,padding:6,overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
+          <thead><tr>
+            <th style={{padding:"6px 4px",textAlign:"left",color:GLD,fontWeight:700,fontSize:9}}>Barco</th>
+            {compLegs.map(L=><th key={L.n} style={{padding:"6px 4px",textAlign:"center",color:GLD,fontWeight:700,fontSize:9,whiteSpace:"nowrap"}}>{L.label}</th>)}
+          </tr></thead>
+          <tbody>
+            {fleet.filter(b=>b.id!==ownId).map(b=>(
+              <tr key={b.id}>
+                <td style={{padding:"5px 4px",textAlign:"left",fontWeight:700,fontSize:10,color:T1,whiteSpace:"nowrap"}}>
+                  <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:b.color||T3,marginRight:4}}/>
+                  {b.bowNum?b.bowNum+" ":""}{b.name}
+                </td>
+                {compLegs.map(L=>{
+                  const tOwn = realT[L.n]?.[ownId], tRiv = realT[L.n]?.[b.id];
+                  if(tOwn==null||tRiv==null) return <td key={L.n} style={{padding:"5px 4px",textAlign:"center",color:T3,fontFamily:"monospace"}}>—</td>;
+                  const realDiff = tRiv - tOwn;
+                  const cOwn = compT(own, L.n), cRiv = compT(b, L.n);
+                  const compDiff = (cRiv!=null&&cOwn!=null) ? (cRiv - cOwn) : null;
+                  const colR = realDiff<0?RED:realDiff>0?GRN:T2;
+                  const colC = compDiff==null?T3:compDiff<0?RED:compDiff>0?GRN:T2;
+                  return(
+                    <td key={L.n} style={{padding:"5px 4px",textAlign:"center",fontFamily:"monospace",lineHeight:1.35}}>
+                      <div style={{fontSize:11,fontWeight:700,color:colR}}>{fmtDiff(realDiff)}</div>
+                      <div style={{fontSize:10,color:colC}}>{compDiff==null?"—":fmtDiff(compDiff)}</div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{fontSize:9,color:T3,textAlign:"center",padding:"8px 0",lineHeight:1.5}}>
+        Arriba real · abajo compensado por distancia (ToD del certificado ORC a {refW} kt).<br/>
+        Si en real te sacan 10s pero compensado solo 5s, su ventaja real es menor.
       </div>
     </div>
   );
@@ -4052,7 +4215,13 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
             Crea un nuevo campeonato o limpia los datos para empezar de cero.
           </div>
           <Btn v={clearing?"Limpiando...":"🗑 Limpiar datos y empezar de nuevo"}
-            onClick={()=>setConfirm2({msg:"¿Limpiar todos los datos guardados? Esta acción no se puede deshacer.",onOk:clearStorage})}
+            onClick={()=>setConfirm2({
+              msg:"¿Limpiar TODOS los datos guardados? Se borrarán todos los campeonatos de este dispositivo.",
+              onOk:()=>setTimeout(()=>setConfirm2({
+                msg:"⚠️ ÚLTIMA confirmación: esto NO se puede deshacer. ¿Seguro que quieres borrar todo?",
+                onOk:clearStorage
+              }),50)
+            })}
             c="red" fw dis={clearing}/>
         </div>
       ):(
@@ -4100,9 +4269,14 @@ function TabRegatas({state, setState, race}){
 
   const Slider = ({label,k,min,max,step,unit=""})=>(
     <div style={{marginBottom:10}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,gap:8}}>
         <span style={{fontSize:11,color:T2}}>{label}</span>
-        <span style={{fontSize:12,fontWeight:700,color:T1,fontFamily:"monospace"}}>{co[k]}{unit}</span>
+        <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+          <input type="number" min={min} max={max} step={step} value={co[k]??0}
+            onChange={e=>{const v=e.target.value===""?0:+e.target.value; updCourse(k, Math.min(max,Math.max(min,v)));}}
+            style={{width:58,textAlign:"right",fontFamily:"monospace",fontSize:13,fontWeight:700,color:T1,padding:"4px 6px"}}/>
+          <span style={{fontSize:11,color:T2}}>{unit}</span>
+        </div>
       </div>
       <input type="range" min={min} max={max} step={step} value={co[k]||0}
         onChange={e=>updCourse(k,+e.target.value)}
@@ -4205,6 +4379,12 @@ function TabRegatas({state, setState, race}){
           )}
 
           {/* Lista de todas las pruebas */}
+          {state.races.length===0 && (
+            <div style={{textAlign:"center",padding:"24px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:11,lineHeight:1.6}}>
+              No hay pruebas de cronometraje.<br/>
+              <span style={{fontSize:10,color:T3}}>Pulsa "＋ Nueva prueba" para cronometrar una regata, o usa solo los resultados oficiales en 📊 Result.</span>
+            </div>
+          )}
           {state.races.map((r,idx)=>{
             const isActive = r.id===state.activeRaceId;
             const passCount = r.passages?.length||0;
@@ -4230,9 +4410,8 @@ function TabRegatas({state, setState, race}){
                       {r.discarded?"↩":"⊘"}
                     </button>
                     <button onClick={()=>setConfirmR({msg:`¿Eliminar "${r.name}" definitivamente?`,onOk:()=>setState(s=>{
-                        const rem=s.races.filter(x=>x.id!==r.id);
-                        const races=rem.length?rem:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:s.races[0]?.course||DCOURSE,discarded:false}];
-                        const activeRaceId = s.activeRaceId===r.id ? races[0].id : s.activeRaceId;
+                        const races=s.races.filter(x=>x.id!==r.id);
+                        const activeRaceId = s.activeRaceId===r.id ? (races[0]?.id||null) : s.activeRaceId;
                         return{...s,races,activeRaceId};
                       })})}
                       title="Eliminar prueba"
@@ -4269,6 +4448,19 @@ function TabRegatas({state, setState, race}){
           </Card>
 
           {(co.raceType||"wl")==="wl"&&(<>
+            <Card st={{marginBottom:10}}>
+              <Lbl v="Vueltas"/>
+              <div style={{display:"flex",gap:6,marginBottom:4}}>
+                {[1,2,3,4].map(v=>(
+                  <button key={v} onClick={()=>updCourse("vueltas",v)}
+                    style={{flex:1,padding:"8px 0",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",
+                      background:(co.vueltas||2)===v?ACC:CARD2,color:(co.vueltas||2)===v?"#fff":T2,border:`1px solid ${(co.vueltas||2)===v?ACC:BDR}`}}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:9,color:T3}}>Tramos: {buildLegs(co.vueltas||2).map(L=>L.label).join(" · ")}</div>
+            </Card>
             <Card st={{marginBottom:10}}>
               <Lbl v="Distancias (nm)"/>
               <Slider label="Distancia Boya 1 (Barlovento)" k="mark1Dist" min={0.5} max={5} step={0.1} unit=" nm"/>
@@ -4599,7 +4791,7 @@ export default function App(){
         </div>
       )}
 
-      <div style={{background:BG,height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto"}}>
+      <div style={{background:BG,height:"100dvh",maxHeight:"100dvh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",overflow:"hidden"}}>
         <style>{CSS}</style>
         {/* Header con rol y selector */}
         <div style={{padding:"5px 12px",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0,display:"flex",alignItems:"center",gap:7}}>
@@ -4653,20 +4845,31 @@ export default function App(){
               };
             });
           }}/> }
-          {tab===1&&<TabRegatas state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
+          {tab===1&&<TabRegatas state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||null}/>}
           {tab===2&&<TabEnVivo state={state} setState={wrappedSetState} role={role}/>}
           {tab===3&&<TabTablas state={state} race={activeRace}/>}
           {tab===4&&<TabResultados state={state} setState={wrappedSetState}/>}
           {tab===5&&<TabConfig state={state} setState={wrappedSetState} race={activeRace||state.races?.[0]||INIT.races[0]}/>}
         </div>
-        <div style={{display:"flex",background:CARD,borderTop:`1px solid ${BDR}`,flexShrink:0}}>
-          {TABS.map(({icon,label},i)=>(
-            <button key={i} onClick={()=>setTab(i)} style={{flex:1,padding:"7px 2px 5px",background:"none",display:"flex",flexDirection:"column",alignItems:"center",gap:1,borderTop:tab===i?`2px solid ${ACC}`:"2px solid transparent"}}>
-              <span style={{fontSize:16,lineHeight:1}}>{icon}</span>
-              <span style={{fontSize:7,fontWeight:700,color:tab===i?ACC:T2}}>{label}</span>
-            </button>
-          ))}
-        </div>
+        {(()=>{
+          const racing = !!activeRace?.startTime;        // hay prueba corriendo
+          const hideBar = racing && tab===2;             // ocultar barra en regata + En Vivo
+          if(hideBar) return (
+            <button onClick={()=>setTab(0)} title="Mostrar menú"
+              style={{position:"absolute",bottom:8,right:8,zIndex:35,width:38,height:38,borderRadius:"50%",
+                background:CARD2,border:`1px solid ${BDR}`,color:T2,fontSize:16,boxShadow:"0 2px 8px #0006"}}>☰</button>
+          );
+          return (
+            <div style={{display:"flex",background:CARD,borderTop:`1px solid ${BDR}`,flexShrink:0}}>
+              {TABS.map(({icon,label},i)=>(
+                <button key={i} onClick={()=>setTab(i)} style={{flex:1,padding:"7px 2px 5px",background:"none",display:"flex",flexDirection:"column",alignItems:"center",gap:1,borderTop:tab===i?`2px solid ${ACC}`:"2px solid transparent"}}>
+                  <span style={{fontSize:16,lineHeight:1}}>{icon}</span>
+                  <span style={{fontSize:7,fontWeight:700,color:tab===i?ACC:T2}}>{label}</span>
+                </button>
+              ))}
+            </div>
+          );
+        })()}
       </div>
     </ErrorBoundary>
   );
