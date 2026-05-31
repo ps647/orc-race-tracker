@@ -165,6 +165,7 @@ export function subscribe(cloudId, onChange) {
   if (!isCloudEnabled() || !cloudId) return () => {};
   const sb = getClient();
   const ch = sb.channel(`champ-${cloudId}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "championships", filter: `id=eq.${cloudId}` }, p => onChange("championship", p))
     .on("postgres_changes", { event: "*", schema: "public", table: "passages", filter: `championship_id=eq.${cloudId}` }, p => onChange("passages", p))
     .on("postgres_changes", { event: "*", schema: "public", table: "races",    filter: `championship_id=eq.${cloudId}` }, p => onChange("races", p))
     .on("postgres_changes", { event: "*", schema: "public", table: "boats",    filter: `championship_id=eq.${cloudId}` }, p => onChange("boats", p))
@@ -192,7 +193,12 @@ async function upsertChampionship(sb, state) {
     name: state.champ.name,
     scoring_mode: state.champ.scoringMode || "WL_ToT",
     own_sail_no: state.fleet?.find(b => b.id === state.champ.ownId)?.sailNo || null,
-    data: { mainUrl: state.champ.mainUrl, resultsUrl: state.champ.resultsUrl, docsUrl: state.champ.docsUrl, photosUrl: state.champ.photosUrl, entryListUrl: state.champ.entryListUrl, ownId: state.champ.ownId },
+    data: { mainUrl: state.champ.mainUrl, resultsUrl: state.champ.resultsUrl, docsUrl: state.champ.docsUrl,
+            photosUrl: state.champ.photosUrl, entryListUrl: state.champ.entryListUrl, ownId: state.champ.ownId,
+            discardEvery: state.champ.discardEvery ?? 4, discardMin: state.champ.discardMin ?? 4,
+            ndRaces: state.champ.ndRaces || [],
+            orcStandings: state.champ.orcStandings || [], orcRaces: state.champ.orcRaces || [],
+            orcNumRaces: state.champ.orcNumRaces || 0, orcLastSync: state.champ.orcLastSync || null },
     updated_at: new Date().toISOString(),
   };
   if (existingId) {
@@ -278,9 +284,15 @@ async function hydrate(sb, champ) {
   }));
   return {
     _champId: champ.id, _cloudId: champ.id,
-    champ: { name: champ.name, joinCode: champ.join_code, scoringMode: champ.scoring_mode, ownId: champ.data?.ownId,
+    champ: { ...(champ.data || {}),
+             name: champ.name, joinCode: champ.join_code, scoringMode: champ.scoring_mode,
+             ownId: champ.data?.ownId,
              mainUrl: champ.data?.mainUrl || "", resultsUrl: champ.data?.resultsUrl || "", docsUrl: champ.data?.docsUrl || "",
-             photosUrl: champ.data?.photosUrl || "", entryListUrl: champ.data?.entryListUrl || "" },
+             photosUrl: champ.data?.photosUrl || "", entryListUrl: champ.data?.entryListUrl || "",
+             discardEvery: champ.data?.discardEvery ?? 4, discardMin: champ.data?.discardMin ?? 4,
+             ndRaces: champ.data?.ndRaces || [],
+             orcStandings: champ.data?.orcStandings || [], orcRaces: champ.data?.orcRaces || [],
+             orcNumRaces: champ.data?.orcNumRaces || 0, orcLastSync: champ.data?.orcLastSync || null },
     fleet,
     races: racesOut.length ? racesOut : [{ id: "r1", name: "Prueba 1", startTime: null, countdownAt: null, finishedAt: null, passages: [], course: null, discarded: false }],
     activeRaceId: racesOut[0]?.id || "r1",
