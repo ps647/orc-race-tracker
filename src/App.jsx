@@ -2236,11 +2236,11 @@ function TabEnVivo({state,setState,role="patron"}){
   // ── MARCAS RÁPIDAS: capturar tiempo ahora, asignar barco+boya después ──
   const legs = raceLegs(course);            // tramos de esta prueba (según vueltas)
   const marks = activeRace?.marks || [];
-  // ¿cuántos pasos tiene un barco? (cuenta por boatId o por sailNo, para casar con la nube)
+  // ¿cuántos pasos tiene un barco? (cuenta por boatId o por sailNo normalizado)
   const passCount = boatId => {
     const b = fleet.find(x=>x.id===boatId);
-    const sn = b?.sailNo;
-    return passages.filter(p => p.boatId===boatId || (sn && p.boatSailNo===sn) || p.boatSailNo===boatId).length;
+    const sn = cloud.normSail(b?.sailNo);
+    return passages.filter(p => p.boatId===boatId || (sn && cloud.normSail(p.boatSailNo)===sn) || cloud.normSail(p.boatSailNo)===cloud.normSail(boatId)).length;
   };
   // siguiente boya que le toca a un barco = nº de pasos que ya tiene + 1
   const nextLeg = boatId => {
@@ -2527,7 +2527,7 @@ function TabEnVivo({state,setState,role="patron"}){
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:4}}>
                   {[...passages].sort((a,z)=>z.realTime-a.realTime).map((p,i)=>{
-                    const b=fleet.find(x=>x.id===p.boatId || x.sailNo===p.boatSailNo || x.sailNo===p.boatId);
+                    const b=fleet.find(x=>x.id===p.boatId || cloud.normSail(x.sailNo)===cloud.normSail(p.boatSailNo) || cloud.normSail(x.sailNo)===cloud.normSail(p.boatId));
                     const el=startTime?Math.round((p.realTime-startTime)/1000):0;
                     const neg=el<0; const am=Math.abs(el); const mm=Math.floor(am/60),ss=am%60;
                     return(
@@ -2596,7 +2596,7 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
   // tiempo real (s desde salida) por barco y nº de tramo
   const realT = {};
   legs.forEach(L=>{ realT[L.n] = {};
-    fleet.forEach(b=>{ const p = passages.find(x=>x.leg===L.n && (x.boatId===b.id || (b.sailNo&&x.boatSailNo===b.sailNo) || x.boatSailNo===b.id));
+    fleet.forEach(b=>{ const sn=cloud.normSail(b.sailNo); const p = passages.find(x=>x.leg===L.n && (x.boatId===b.id || (sn&&cloud.normSail(x.boatSailNo)===sn) || cloud.normSail(x.boatSailNo)===cloud.normSail(b.id)));
       if(p) realT[L.n][b.id] = (p.realTime-startTime)/1000; });
   });
 
