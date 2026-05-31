@@ -4236,23 +4236,36 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
   const clearStorage = async()=>{
     setClearing(true);
     try{
-      // 1) Borrar de la NUBE todos los campeonatos guardados localmente (rompe el ciclo de re-subida)
+      // 1) Recoger los cloudIds ANTES de borrar, para limpiarlos de la nube
+      const cloudIds = [];
+      try{
+        Object.keys(localStorage).filter(k=>k.startsWith("orc-ch-")).forEach(k=>{
+          try{ const cid=JSON.parse(localStorage.getItem(k))?._cloudId; if(cid) cloudIds.push(cid); }catch{}
+        });
+        if(state?._cloudId) cloudIds.push(state._cloudId);
+        try{ const cur=JSON.parse(localStorage.getItem("orc-v7")||"{}")?._cloudId; if(cur) cloudIds.push(cur); }catch{}
+      }catch{}
+
+      // 2) BORRAR TODO LO LOCAL primero (a prueba de fallos), salvo config de nube y ajustes
+      try{
+        const keep = new Set(["orc-cloud-cfg","orc-device-id","orc-theme","orc-role"]);
+        Object.keys(localStorage).filter(k=>k.startsWith("orc-")&&!keep.has(k)).forEach(k=>localStorage.removeItem(k));
+      }catch{}
+
+      // 3) Borrar de la nube los campeonatos recogidos (si la nube está activa)
       if(cloud.isCloudEnabled()){
-        try{
-          const keys = Object.keys(localStorage).filter(k=>k.startsWith("orc-ch-"));
-          for(const k of keys){
-            try{ const cid = JSON.parse(localStorage.getItem(k))?._cloudId; if(cid) await cloud.deleteByCloudId(cid); }catch{}
-          }
-          // por si el estado activo tiene un cloudId no reflejado en las claves
-          if(state?._cloudId) await cloud.deleteByCloudId(state._cloudId);
-        }catch{}
+        for(const cid of [...new Set(cloudIds)]){
+          try{ await cloud.deleteByCloudId(cid); }catch{}
+        }
       }
-      // 2) Borrar TODO lo local
-      localStorage.removeItem("orc-v7");
-      localStorage.removeItem("orc-champs-idx");
-      Object.keys(localStorage).filter(k=>k.startsWith("orc-ch-")).forEach(k=>localStorage.removeItem(k));
+
+      // 4) Recargar limpio
       window.location.reload();
-    }catch{ setClearing(false); }
+    }catch{
+      // aun si algo falla, intentar limpiar y recargar
+      try{ const keep=new Set(["orc-cloud-cfg","orc-device-id","orc-theme","orc-role"]); Object.keys(localStorage).filter(k=>k.startsWith("orc-")&&!keep.has(k)).forEach(k=>localStorage.removeItem(k)); }catch{}
+      window.location.reload();
+    }
   };
 
   const syncOrc = async()=>{
@@ -4689,23 +4702,14 @@ export default function App(){
           await saveS({...migrated, _champId: migrId});
           setTab(2); // ← datos migrados: ir directo a En Vivo
 
-        // ── Caso 3: primera vez (sin datos) → mostrar Home ───────────────────
+        // ── Caso 3: primera vez (sin datos) → mostrar Home VACÍO ─────────────
+        // NO crear ni subir un campeonato por defecto (eso causaba duplicados
+        // fantasma "ORC World Championship 2026" en la nube al arrancar limpio).
         } else {
-          const defaultId = "champ_default";
-          const initState = {...INIT, _champId: defaultId};
-          const entry = {
-            id: defaultId,
-            name: INIT.champ.name,
-            racesCount: 1,
-            fleetCount: CLASS0.length,
-            createdAt: Date.now()
-          };
-          setChampsList([entry]);
-          setCurrentId(defaultId);
-          setState(initState);
-          await saveIdx([entry]);
-          await saveCh(defaultId, initState);
-          setTab(0); // ← primera vez: Home para configurar
+          setChampsList([]);
+          setCurrentId(null);
+          setState({...INIT, _champId:null});
+          setTab(0); // Home: el usuario crea uno nuevo o entra por código
         }
       } catch(e) {
         console.error("Error cargando estado:", e);
