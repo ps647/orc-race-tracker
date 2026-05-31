@@ -145,6 +145,19 @@ export async function listChampionships() {
   } catch { return []; }
 }
 
+// Borrar un campeonato de la nube directamente por su id de nube.
+export async function deleteByCloudId(cloudId) {
+  if (!isCloudEnabled() || !cloudId) return { ok: false };
+  try {
+    const sb = getClient();
+    await sb.from("passages").delete().eq("championship_id", cloudId);
+    await sb.from("races").delete().eq("championship_id", cloudId);
+    await sb.from("boats").delete().eq("championship_id", cloudId);
+    const { error } = await sb.from("championships").delete().eq("id", cloudId);
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 // Borrar un campeonato de la nube (cascade borra boats/races/passages por la FK).
 export async function deleteChampionship(localId) {
   const cloudId = lsGet(chKey(localId))?._cloudId;  // leer ANTES de borrar local
