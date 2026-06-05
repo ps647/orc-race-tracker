@@ -2925,7 +2925,15 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
     return aOwn - aRiv;  // segundos que el rival debe sacarte en real
   };
 
-  const fmt = sec => { const s=Math.round(sec); return (s>0?"+":"")+s+"s"; };
+  // Formato de tiempo en m:ss con signo, consistente con la tabla de "Tiempos asignados".
+  // Ej: 82s → "+1:22", -181s → "-3:01", 0 → "0:00"
+  const fmt = sec => {
+    const s = Math.round(sec);
+    const sign = s > 0 ? "+" : (s < 0 ? "-" : "");
+    const a = Math.abs(s);
+    const m = Math.floor(a/60), r = a%60;
+    return `${sign}${m}:${r.toString().padStart(2,"0")}`;
+  };
   const compLegs = legs; // mostramos todas las boyas del recorrido (según vueltas)
   const lastN = compLegs.length ? compLegs[compLegs.length-1].n : 0;
 
@@ -3003,7 +3011,7 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
       </div>
       <div style={{fontSize:9,color:T3,textAlign:"center",padding:"8px 0",lineHeight:1.5}}>
         Cálculo teórico ORC (ToD a {refW} kt) según las distancias del recorrido.<br/>
-        Ordenado por la <b>Llegada</b> (resaltada): arriba quien más debe sacarte. <b style={{color:RED}}>+18s</b> = ese rival debe pasar esa boya 18s antes que tú para empatar.
+        Ordenado por la <b>Llegada</b> (resaltada): arriba quien más debe sacarte. <b style={{color:RED}}>+0:18</b> = ese rival debe pasar esa boya 18s antes que tú para empatar.
       </div>
     </div>
   );
