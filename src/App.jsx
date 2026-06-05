@@ -904,9 +904,32 @@ Responde SOLO JSON, sin markdown:
     e.target.value="";
   };
 
+  // Abre la web pública de ORC en una pestaña aparte y copia el sailNo al
+  // portapapeles para que el usuario lo pegue en el buscador.
+  const searchInOrc = async () => {
+    const sn = (sailNo||"").trim();
+    if(!sn){ setMsg("❌ Este barco no tiene nº de vela — añádelo primero arriba"); return; }
+    try{
+      await navigator.clipboard.writeText(sn);
+      setMsg(`📋 SailNo "${sn}" copiado al portapapeles. Pégalo en el buscador de la web de ORC, descarga el PDF y vuelve aquí para subirlo.`);
+    }catch{
+      setMsg(`📋 SailNo "${sn}" listo — pégalo en el buscador de ORC. Web abierta en pestaña aparte.`);
+    }
+    // Abrimos la home de la base de datos pública ORC. Si en el futuro
+    // confirmamos una URL de búsqueda con parámetros, la pondremos aquí.
+    window.open("https://data.orc.org/", "_blank", "noopener,noreferrer");
+  };
+
   return(
     <div>
       <input ref={fileRef} type="file" accept="application/pdf" style={{display:"none"}} onChange={handleFile}/>
+      {/* Botón: ir a buscar el cert en la web de ORC con el sailNo en portapapeles */}
+      <button onClick={searchInOrc} disabled={busy}
+        style={{width:"100%",padding:"7px 0",borderRadius:7,marginBottom:6,
+          background:`${ACC}18`, color:ACC, border:`1px solid ${ACC}55`,
+          fontSize:10,fontWeight:700,cursor:busy?"default":"pointer"}}>
+        🔍 Buscar cert. en ORC{sailNo?` · ${sailNo}`:""}
+      </button>
       <button onClick={()=>fileRef.current?.click()} disabled={busy}
         style={{width:"100%",padding:"9px 0",borderRadius:7,
           background:ok?`${GRN}22`:busy?CARD2:CYN,
@@ -917,8 +940,8 @@ Responde SOLO JSON, sin markdown:
       </button>
       {msg&&(
         <div style={{marginTop:5,fontSize:9,padding:"5px 8px",borderRadius:6,lineHeight:1.5,
-          background:ok?`${GRN}15`:msg.startsWith("❌")||msg.startsWith("⏱")?`${RED}15`:`${CYN}15`,
-          color:ok?GRN:msg.startsWith("❌")||msg.startsWith("⏱")?RED:CYN}}>
+          background:ok?`${GRN}15`:msg.startsWith("❌")||msg.startsWith("⏱")?`${RED}15`:msg.startsWith("📋")?`${ACC}15`:`${CYN}15`,
+          color:ok?GRN:msg.startsWith("❌")||msg.startsWith("⏱")?RED:msg.startsWith("📋")?ACC:CYN}}>
           {msg}
         </div>
       )}
@@ -1391,7 +1414,13 @@ function ChampLinks({state, setState}){
         <div key={key} style={{marginBottom:8}}>
           <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
             <span style={{fontSize:10,color:T2}}>{icon} {label}</span>
-            {state.champ[key]&&<a href={state.champ[key]} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:ACC,marginLeft:"auto"}}>↗ Abrir</a>}
+            {state.champ[key]&&(
+              <a href={state.champ[key]} target="_blank" rel="noopener noreferrer"
+                style={{marginLeft:"auto",padding:"2px 8px",borderRadius:5,fontSize:9,fontWeight:700,
+                  background:`${ACC}22`,color:ACC,border:`1px solid ${ACC}55`,textDecoration:"none"}}>
+                🌐 Abrir
+              </a>
+            )}
           </div>
           <input value={state.champ[key]||""} onChange={e=>updChamp(key,e.target.value)}
             placeholder={ph} style={{fontSize:10}}/>
@@ -4336,7 +4365,7 @@ function NewChampWizard({onClose, onCreate}){
             {[
               {key:"entryListUrl", icon:"⛵", label:"Lista de inscritos", required:true,
                ph:"https://data.orc.org/...?action=entrylist&eventid=... o URL del PDF",
-               hint:"Necesario para cargar los barcos"},
+               hint:"Necesario para cargar los barcos. Si la web no se puede leer automáticamente, pulsa \"Abrir web\" → copia la lista de inscritos → vuelve y pega en \"Pegar texto\" abajo."},
               {key:"resultsUrl",   icon:"📊", label:"Resultados (sincronización automática)",
                ph:"https://data.orc.org/...?action=index&eventid=...",
                hint:"Para actualizar la clasificación durante la regata"},
@@ -4349,14 +4378,19 @@ function NewChampWizard({onClose, onCreate}){
                   <span style={{fontSize:11}}>{icon}</span>
                   <span style={{fontSize:10,fontWeight:700,color:required?T1:T2}}>{label}</span>
                   {required&&<span style={{fontSize:9,color:RED,fontWeight:700}}>*</span>}
-                  {confirmedLinks[key]&&<a href={confirmedLinks[key]} target="_blank" rel="noopener noreferrer"
-                    style={{marginLeft:"auto",fontSize:10,color:ACC}}>↗ Abrir</a>}
+                  {confirmedLinks[key]&&(
+                    <a href={confirmedLinks[key]} target="_blank" rel="noopener noreferrer"
+                      style={{marginLeft:"auto",padding:"3px 9px",borderRadius:5,fontSize:10,fontWeight:700,
+                        background:`${ACC}22`,color:ACC,border:`1px solid ${ACC}55`,textDecoration:"none"}}>
+                      🌐 Abrir web
+                    </a>
+                  )}
                 </div>
                 <input value={confirmedLinks[key]||""}
                   onChange={e=>setConfirmedLinks(l=>({...l,[key]:e.target.value}))}
                   placeholder={ph}
                   style={{fontSize:10,borderColor:required&&!confirmedLinks[key]?RED:undefined}}/>
-                <div style={{fontSize:9,color:T3,marginTop:2}}>{hint}</div>
+                <div style={{fontSize:9,color:T3,marginTop:2,lineHeight:1.5}}>{hint}</div>
               </div>
             ))}
             {err&&<div style={{color:RED,fontSize:11,marginBottom:8,padding:"8px 10px",background:`${RED}15`,borderRadius:7}}>{err}</div>}
@@ -4535,7 +4569,7 @@ function NewChampWizard({onClose, onCreate}){
             {err&&<div style={{color:RED,fontSize:11,marginBottom:8}}>{err}</div>}
             <div style={{display:"flex",gap:7}}>
               <Btn v="← Atrás" onClick={()=>setStep(foundClasses.length>1?"3c":3)} c="dim"/>
-              <Btn v="✓ Crear campeonato" onClick={finish} c="grn" fw lg dis={!ownId||!hasValidRating(fleet.find(b=>b.id===ownId),scoring)}/>
+              <Btn v="✓ Crear campeonato" onClick={finish} c="grn" fw lg dis={!ownId}/>
             </div>
             </>)}
           </>
