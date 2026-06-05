@@ -2772,8 +2772,8 @@ function TabEnVivo({state,setState,role="patron"}){
                     const b = findBoat(p);
                     if (b?.id === ownId) ownTimeAtLeg[p.leg] = p.realTime;
                   }
-                  // Mostrar boyas en orden (1, 2, 3...)
-                  const legNumbers = Object.keys(byLeg).map(Number).sort((a,b) => a-b);
+                  // Mostrar boyas en orden inverso (última boya pasada arriba)
+                  const legNumbers = Object.keys(byLeg).map(Number).sort((a,b) => b-a);
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {legNumbers.map(legN => {
