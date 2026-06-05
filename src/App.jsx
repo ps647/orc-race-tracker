@@ -2133,9 +2133,67 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
   const el = startTime ? Math.round((mark.time-startTime)/1000) : 0;
   const mm = Math.floor(el/60), ss = el%60;
   const hora = new Date(mark.time).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  const sortedFleet = [...fleet].sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
-  const nl = boatId ? nextLeg(boatId) : null;       // siguiente boya del barco elegido
+
+  // ── Clasificar la flota según su situación frente a este tiempo ───────
+  // Lo más probable es que este tiempo sea de la boya MÁS ATRASADA pendiente
+  // (la mínima nextLeg de los barcos aún en regata). Los barcos que ya han
+  // pasado esa boya van abajo en gris.
+  const allFleet = fleet.map(b => ({...b, _nl: nextLeg(b.id)}));
+  const inRace   = allFleet.filter(b => b._nl !== null);
+  const expectedLeg = inRace.length ? Math.min(...inRace.map(b => b._nl)) : null;
+  const expectedLegDef = expectedLeg ? legs[expectedLeg-1] : null;
+
+  // Velocidad (gpH menor = más rápido a la boya de ceñida). Default alto.
+  const speedOf = b => b.gpH || 999;
+
+  // Grupos
+  const waiting  = inRace.filter(b => b._nl === expectedLeg).sort((a,b) => speedOf(a)-speedOf(b));
+  const past     = inRace.filter(b => b._nl !== expectedLeg).sort((a,b) => (a._nl-b._nl) || speedOf(a)-speedOf(b));
+  const finished = allFleet.filter(b => b._nl === null).sort((a,b) => (a.bowNum||99)-(b.bowNum||99));
+
+  // Auto-sugerencia: solo si queda 1 barco esperando esa boya
+  const onlyOne = waiting.length === 1 ? waiting[0] : null;
+
+  // Boya destino del barco seleccionado
+  const nl = boatId ? nextLeg(boatId) : null;
   const nlDef = nl ? legs[nl-1] : null;
+
+  // Etiqueta corta de a qué boya va cada barco (sub-texto en cada pill)
+  const dest = b => {
+    if(b._nl === null) return "✓";
+    const lg = legs[b._nl-1];
+    return `→ ${lg?.label || `B${b._nl}`}`;
+  };
+
+  // Pill de barco (reutilizable para waiting / past / finished)
+  const Pill = ({b, dim=false, suggested=false}) => {
+    const finished = b._nl === null;
+    const selected = boatId === b.id;
+    return (
+      <button
+        key={b.id}
+        onClick={() => !finished && setBoatId(b.id)}
+        disabled={finished}
+        title={b.sailNo || ""}
+        style={{
+          display:"flex", flexDirection:"column", alignItems:"flex-start", gap:1,
+          padding:"5px 9px", borderRadius:14, fontSize:11, fontWeight:700,
+          cursor:finished?"default":"pointer",
+          opacity: finished ? 0.35 : (dim ? 0.55 : 1),
+          background: selected ? (b.color||ACC) : (suggested ? `${b.color||ACC}33` : CARD2),
+          color: selected ? "#fff" : T2,
+          border: `${suggested?2:1}px solid ${selected?(b.color||ACC):(suggested?(b.color||ACC):BDR)}`,
+        }}>
+        <div style={{display:"flex",alignItems:"center",gap:4}}>
+          <span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:b.color||T3,flexShrink:0}}/>
+          <span>{b.bowNum?`${b.bowNum} `:""}{b.name}{finished?" ✓":""}</span>
+        </div>
+        <span style={{fontSize:9,fontWeight:500,color:selected?"#fff":T3,opacity:0.85,marginLeft:13}}>
+          {dest(b)}
+        </span>
+      </button>
+    );
+  };
 
   return(
     <div style={{background:CARD,border:`1px solid ${boatId?GRN:GLD}55`,borderRadius:10,padding:"10px 12px"}}>
@@ -2149,25 +2207,62 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
         <button onClick={onDelete} style={{padding:"6px 10px",borderRadius:6,background:`${RED}18`,color:RED,fontSize:13,border:"none",cursor:"pointer",flexShrink:0}}>🗑</button>
       </div>
 
-      {/* Selector de barco */}
-      <div style={{fontSize:9,color:T2,marginBottom:4}}>¿Qué barco pasó?</div>
-      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
-        {sortedFleet.map(b=>{
-          const bnl = nextLeg(b.id);
-          const finished = bnl===null;
-          return(
-            <button key={b.id} onClick={()=>!finished&&setBoatId(b.id)} disabled={finished} style={{
-              display:"flex",alignItems:"center",gap:4,padding:"5px 9px",borderRadius:14,fontSize:11,fontWeight:700,cursor:finished?"default":"pointer",opacity:finished?0.35:1,
-              background:boatId===b.id?b.color||ACC:CARD2, color:boatId===b.id?"#fff":T2, border:`1px solid ${boatId===b.id?(b.color||ACC):BDR}`}}>
-              <span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:b.color||T3}}/>
-              {b.bowNum?`${b.bowNum} `:""}{b.name}{finished?" ✓":""}
-            </button>
-          );
-        })}
+      {/* Banner de auto-sugerencia (solo si queda 1 barco esperando la boya esperada) */}
+      {onlyOne && !boatId && expectedLegDef && (
+        <div style={{
+          background:`${expectedLegDef.col}18`, border:`1px solid ${expectedLegDef.col}66`,
+          borderRadius:8, padding:"8px 10px", marginBottom:8, display:"flex",
+          alignItems:"center", gap:8, flexWrap:"wrap"
+        }}>
+          <div style={{flex:"1 1 auto", minWidth:140}}>
+            <div style={{fontSize:10,color:T3,marginBottom:2}}>Solo queda este por pasar {expectedLegDef.label}:</div>
+            <div style={{fontWeight:800,fontSize:13,color:T1,display:"flex",alignItems:"center",gap:5}}>
+              <span style={{display:"inline-block",width:11,height:11,borderRadius:"50%",background:onlyOne.color||T3}}/>
+              {onlyOne.bowNum?`${onlyOne.bowNum} `:""}{onlyOne.name}
+            </div>
+          </div>
+          <button onClick={()=>{ setBoatId(onlyOne.id); }} style={{
+            padding:"8px 14px",borderRadius:7,background:onlyOne.color||GRN,color:"#fff",
+            border:"none",fontSize:12,fontWeight:800,cursor:"pointer",flexShrink:0
+          }}>Sí, es este</button>
+        </div>
+      )}
+
+      {/* Cabecera del selector */}
+      <div style={{fontSize:9,color:T2,marginBottom:4}}>
+        {expectedLegDef
+          ? <>Por orden, deben pasar <b style={{color:expectedLegDef.col}}>{expectedLegDef.label}</b>:</>
+          : <>¿Qué barco pasó?</>}
       </div>
 
-      {/* Siguiente boya automática */}
-      {boatId&&nlDef&&(
+      {/* Grupo 1: barcos esperando la boya esperada (ordenados por velocidad) */}
+      {waiting.length > 0 && (
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:past.length||finished.length?6:8}}>
+          {waiting.map(b => (
+            <Pill key={b.id} b={b} suggested={onlyOne?.id===b.id && !boatId}/>
+          ))}
+        </div>
+      )}
+
+      {/* Grupo 2: barcos que ya pasaron esa boya (atenuados) */}
+      {past.length > 0 && (
+        <>
+          <div style={{fontSize:9,color:T3,marginBottom:3,marginTop:4}}>Ya pasaron:</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:finished.length?6:8}}>
+            {past.map(b => <Pill key={b.id} b={b} dim/>)}
+          </div>
+        </>
+      )}
+
+      {/* Grupo 3: barcos que ya llegaron a meta */}
+      {finished.length > 0 && (
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+          {finished.map(b => <Pill key={b.id} b={b}/>)}
+        </div>
+      )}
+
+      {/* Siguiente boya automática del barco elegido */}
+      {boatId && nlDef && (
         <div style={{marginBottom:10}}>
           <div style={{fontSize:9,color:T2,marginBottom:4}}>Se registrará en:</div>
           <span style={{display:"inline-block",padding:"6px 12px",borderRadius:14,fontSize:11,fontWeight:700,color:"#fff",background:nlDef.col}}>→ {nlDef.label}</span>
