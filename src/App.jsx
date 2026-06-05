@@ -340,7 +340,8 @@ function parseVoiceInput(text, fleet) {
   
   return null;
 }
-const WINDS=[6,8,10,12,14,16,20];
+// Vientos estándar ORC (9 puntos del certificado 2026: 4..24 kt)
+const WINDS=[4,6,8,10,12,14,16,20,24];
 const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
 const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:"",scoringMode:"AP_ToD",discardEvery:4,discardMin:4},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
 // Genera los tramos según el nº de vueltas.
@@ -439,13 +440,28 @@ function hasValidRating(b, modeKey=DEFAULT_SCORING){
   return false;
 }
 
+// Devuelve el valor de una curva ORC indexado por la posición en WINDS.
+// Retrocompatibilidad: curvas viejas tienen 7 elementos (6..20 kt) en lugar
+// de 9 (4..24 kt). En ese caso 4 kt y 24 kt devuelven null (no estaban en
+// el certificado viejo); los demás se mapean por desplazamiento.
+function curveAt(arr, i){
+  if(!arr || i<0) return null;
+  if(arr.length === WINDS.length) return arr[i]==null ? null : arr[i];   // 9 valores: directo
+  if(arr.length === 7){                                                    // legacy 6..20 kt
+    const li = i - 1;  // i=1 (6kt) → arr[0]; i=7 (20kt) → arr[6]
+    return (li>=0 && li<7) ? (arr[li]==null ? null : arr[li]) : null;
+  }
+  return arr[i]==null ? null : arr[i];
+}
+
 // Devuelve el ToD efectivo (segundos/milla) para un viento dado, usando la curva
 // real del certificado si existe; si no, cae al single number; si no, al gpH legacy.
 function ratingToD(b, tws, modeKey=DEFAULT_SCORING){
   const m = scoringMode(modeKey), r = b?.rating;
   if(r?.curves?.[m.curve]?.length){
     const row = r.curves[m.curve], i = WINDS.indexOf(tws);
-    if(i>=0 && row[i]!=null) return row[i];
+    const v = curveAt(row, i);
+    if(v!=null) return v;
   }
   if(r?.single?.[m.single]!=null && m.kind==="ToD") return r.single[m.single];
   if(b.gpH) return b.gpH; // legacy
@@ -458,13 +474,22 @@ function vpp(b, tws, modeKey=DEFAULT_SCORING){
   // Si el barco trae las curvas detalladas del certificado, las usamos directamente.
   const r = (typeof b==="object") ? b?.rating : null;
   const i = WINDS.indexOf(tws);
-  if(r?.ta && i>=0 && r.ta.beat?.[i]!=null){
-    return {beat:r.ta.beat[i], reach:r.ta.r90?.[i] ?? r.ta.beat[i], run:r.ta.run?.[i] ?? r.ta.beat[i]};
+  if(r?.ta && i>=0){
+    const beat = curveAt(r.ta.beat, i);
+    if(beat!=null){
+      const reach = curveAt(r.ta.r90, i);
+      const run   = curveAt(r.ta.run, i);
+      return {beat, reach: reach!=null?reach:beat, run: run!=null?run:beat};
+    }
   }
   // Fallback legacy: derivar de un escalar (acepta número o barco con gpH).
   const gpH = (typeof b==="number") ? b : ratingToD(b, tws, modeKey);
   if(gpH==null) return {beat:null,reach:null,run:null};
-  const bi=[1.27,1.14,1.07,1.03,1.01,1.00,.99],ri=[1.30,1.19,1.10,1.05,1.02,1.00,.99];
+  // Factores aproximados beat/run sobre gpH escalar, por viento.
+  // Índices: 0=4kt, 1=6kt, 2=8kt, 3=10kt, 4=12kt, 5=14kt, 6=16kt, 7=20kt, 8=24kt
+  // (4 y 24 kt extrapolados, son fallback grosero — usa el certificado real cuando puedas)
+  const bi=[1.40,1.27,1.14,1.07,1.03,1.01,1.00,0.99,0.98];
+  const ri=[1.41,1.30,1.19,1.10,1.05,1.02,1.00,0.99,0.98];
   if(i<0)return{beat:gpH,reach:+(gpH*.97).toFixed(1),run:gpH};
   return{beat:+(gpH*bi[i]).toFixed(1),reach:+(gpH*(.97+(bi[i]-.97)*.3)).toFixed(1),run:+(gpH*ri[i]).toFixed(1)};
 }
@@ -822,21 +847,21 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
           max_tokens: 1200,
           messages:[{role:"user", content:[
             {type:"document", source:{type:"base64", media_type:"application/pdf", data:b64}},
-            {type:"text", text:`Este es un certificado ORC 2026. Extrae los valores EXACTOS de las tablas. Las columnas de viento son siempre: 6,8,10,12,14,16,20 kt (ignora 4 kt y 24 kt).
+            {type:"text", text:`Este es un certificado ORC 2026. Extrae los valores EXACTOS de las tablas. Las columnas de viento son siempre los 9 puntos estándar ORC: 4, 6, 8, 10, 12, 14, 16, 20, 24 kt.
 
 1. Datos del barco: boatName, sailNo, boatType (Class), certNo, validUntil (formato YYYY-MM-DD).
 2. Tabla "Single Number Scoring Options": para Windward/Leeward y All purpose toma Time On Distance y Time On Time. De "Coastal/Long Distance" toma su Time On Distance.
-3. Tabla "Time Allowances in secs/NM" (página 2). Necesito tres filas como arrays de 7 números (6,8,10,12,14,16,20 kt):
+3. Tabla "Time Allowances in secs/NM" (página 2). Necesito tres filas como arrays de 9 números (4,6,8,10,12,14,16,20,24 kt):
    - "Beat VMG" → beat
    - la fila "90°" → r90
    - "Run VMG" → run
-4. De "Selected Courses" toma las filas "Windward / Leeward" y "All purpose" como arrays de 7 (curvas wl y ap). De "Performance Curve" la fila "Coastal/Long Distance" como array de 7 (curva coastal).
+4. De "Selected Courses" toma las filas "Windward / Leeward" y "All purpose" como arrays de 9 (curvas wl y ap). De "Performance Curve" la fila "Coastal/Long Distance" como array de 9 (curva coastal).
 
 Responde SOLO JSON, sin markdown:
 {"boatName":"HISPANIA","sailNo":"ESP-10000","boatType":"TP 52","certNo":"1000002","validUntil":"2026-12-31",
 "single":{"wl_tod":477.7,"wl_tot":1.2560,"ap_tod":381.5,"ap_tot":1.5729,"cld_tod":416.4},
-"ta":{"beat":[686.6,574.5,533.0,510.6,496.7,486.7,475.9],"r90":[417.9,371.4,336.2,310.8,293.8,280.4,259.9],"run":[703.9,549.5,470.8,420.9,375.5,332.2,263.4]},
-"curves":{"wl":[695.2,562.0,501.9,465.7,436.1,409.5,369.6],"ap":[533.1,443.3,400.7,373.2,350.7,330.9,302.6],"coastal":[696.1,530.0,451.7,400.3,365.6,334.9,287.3]}}`}
+"ta":{"beat":[890.4,686.6,574.5,533.0,510.6,496.7,486.7,475.9,470.2],"r90":[520.1,417.9,371.4,336.2,310.8,293.8,280.4,259.9,245.0],"run":[1048.6,703.9,549.5,470.8,420.9,375.5,332.2,263.4,237.8]},
+"curves":{"wl":[890.4,695.2,562.0,501.9,465.7,436.1,409.5,369.6,355.2],"ap":[680.5,533.1,443.3,400.7,373.2,350.7,330.9,302.6,290.1],"coastal":[895.3,696.1,530.0,451.7,400.3,365.6,334.9,287.3,265.8]}}`}
           ]}]
         })
       });
@@ -869,8 +894,9 @@ Responde SOLO JSON, sin markdown:
       if(s.wl_tot!=null) parts.push(`W/L ToT ${s.wl_tot}`);
       if(s.wl_tod!=null) parts.push(`W/L ToD ${s.wl_tod}`);
       if(s.ap_tod!=null) parts.push(`AP ToD ${s.ap_tod}`);
-      const curvasOk = rating.ta?.beat?.length===7;
-      setMsg(`✅ ${rating.boatType||""} · ${parts.join(" · ")}${curvasOk?" · curvas ✓":" · sin curvas"} · válido hasta ${rating.validUntil||"—"}`);
+      const curvasOk = rating.ta?.beat?.length === 9 || rating.ta?.beat?.length === 7;
+      const curvasNota = rating.ta?.beat?.length === 7 ? " · curvas legacy 6-20kt" : (curvasOk ? " · curvas 4-24kt ✓" : " · sin curvas");
+      setMsg(`✅ ${rating.boatType||""} · ${parts.join(" · ")}${curvasNota} · válido hasta ${rating.validUntil||"—"}`);
     }catch(e){
       setMsg("❌ Error: "+e.message);
     }
