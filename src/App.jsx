@@ -2135,62 +2135,72 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
   const hora = new Date(mark.time).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 
   // ── Clasificar la flota según su situación frente a este tiempo ───────
-  // Lo más probable es que este tiempo sea de la boya MÁS ATRASADA pendiente
-  // (la mínima nextLeg de los barcos aún en regata). Los barcos que ya han
-  // pasado esa boya van abajo en gris.
+  // La boya esperada del próximo barco en pasar = la MÁS ATRASADA pendiente.
   const allFleet = fleet.map(b => ({...b, _nl: nextLeg(b.id)}));
   const inRace   = allFleet.filter(b => b._nl !== null);
   const expectedLeg = inRace.length ? Math.min(...inRace.map(b => b._nl)) : null;
   const expectedLegDef = expectedLeg ? legs[expectedLeg-1] : null;
 
-  // Velocidad (gpH menor = más rápido a la boya de ceñida). Default alto.
   const speedOf = b => b.gpH || 999;
 
-  // Grupos
+  // Grupos principales
   const waiting  = inRace.filter(b => b._nl === expectedLeg).sort((a,b) => speedOf(a)-speedOf(b));
   const past     = inRace.filter(b => b._nl !== expectedLeg).sort((a,b) => (a._nl-b._nl) || speedOf(a)-speedOf(b));
   const finished = allFleet.filter(b => b._nl === null).sort((a,b) => (a.bowNum||99)-(b.bowNum||99));
-
-  // Auto-sugerencia: solo si queda 1 barco esperando esa boya
   const onlyOne = waiting.length === 1 ? waiting[0] : null;
 
-  // Boya destino del barco seleccionado
+  // Sub-agrupar "past" por boya destino, en orden por nº de boya
+  const pastByLeg = {};
+  for (const b of past) {
+    if (!pastByLeg[b._nl]) pastByLeg[b._nl] = [];
+    pastByLeg[b._nl].push(b);
+  }
+  const pastLegNumbers = Object.keys(pastByLeg).map(Number).sort((a,b) => a-b);
+
   const nl = boatId ? nextLeg(boatId) : null;
   const nlDef = nl ? legs[nl-1] : null;
 
-  // Etiqueta corta de a qué boya va cada barco (sub-texto en cada pill)
-  const dest = b => {
-    if(b._nl === null) return "✓";
-    const lg = legs[b._nl-1];
-    return `→ ${lg?.label || `B${b._nl}`}`;
-  };
-
-  // Pill de barco (reutilizable para waiting / past / finished)
-  const Pill = ({b, dim=false, suggested=false}) => {
-    const finished = b._nl === null;
+  // Pill GRANDE para los "waiting" (más prominentes)
+  const PillBig = ({b, suggested=false}) => {
     const selected = boatId === b.id;
     return (
       <button
-        key={b.id}
+        onClick={() => setBoatId(b.id)}
+        title={b.sailNo || ""}
+        style={{
+          display:"flex", alignItems:"center", gap:7,
+          padding:"9px 13px", borderRadius:18, fontSize:13, fontWeight:800,
+          cursor:"pointer",
+          background: selected ? (b.color||ACC) : (suggested ? `${b.color||ACC}22` : CARD2),
+          color: selected ? "#fff" : T1,
+          border: `${suggested||selected?2:1}px solid ${selected?(b.color||ACC):(suggested?(b.color||ACC):BDR)}`,
+          boxShadow: suggested && !selected ? `0 0 0 3px ${b.color||ACC}11` : "none",
+        }}>
+        <span style={{display:"inline-block",width:12,height:12,borderRadius:"50%",background:b.color||T3,flexShrink:0}}/>
+        <span>{b.bowNum?`${b.bowNum} `:""}{b.name}</span>
+      </button>
+    );
+  };
+
+  // Pill PEQUEÑO para los "past" y "finished" (compactos, sin texto extra de destino — la cabecera ya lo dice)
+  const PillSmall = ({b, finished=false}) => {
+    const selected = boatId === b.id;
+    return (
+      <button
         onClick={() => !finished && setBoatId(b.id)}
         disabled={finished}
         title={b.sailNo || ""}
         style={{
-          display:"flex", flexDirection:"column", alignItems:"flex-start", gap:1,
-          padding:"5px 9px", borderRadius:14, fontSize:11, fontWeight:700,
+          display:"flex", alignItems:"center", gap:4,
+          padding:"4px 8px", borderRadius:13, fontSize:10, fontWeight:700,
           cursor:finished?"default":"pointer",
-          opacity: finished ? 0.35 : (dim ? 0.55 : 1),
-          background: selected ? (b.color||ACC) : (suggested ? `${b.color||ACC}33` : CARD2),
+          opacity: finished ? 0.4 : 0.7,
+          background: selected ? (b.color||ACC) : CARD2,
           color: selected ? "#fff" : T2,
-          border: `${suggested?2:1}px solid ${selected?(b.color||ACC):(suggested?(b.color||ACC):BDR)}`,
+          border: `1px solid ${selected?(b.color||ACC):BDR}`,
         }}>
-        <div style={{display:"flex",alignItems:"center",gap:4}}>
-          <span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:b.color||T3,flexShrink:0}}/>
-          <span>{b.bowNum?`${b.bowNum} `:""}{b.name}{finished?" ✓":""}</span>
-        </div>
-        <span style={{fontSize:9,fontWeight:500,color:selected?"#fff":T3,opacity:0.85,marginLeft:13}}>
-          {dest(b)}
-        </span>
+        <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:b.color||T3,flexShrink:0}}/>
+        <span>{b.bowNum?`${b.bowNum} `:""}{b.name}{finished?" ✓":""}</span>
       </button>
     );
   };
@@ -2198,7 +2208,7 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
   return(
     <div style={{background:CARD,border:`1px solid ${boatId?GRN:GLD}55`,borderRadius:10,padding:"10px 12px"}}>
       {/* Cabecera: tiempo de la marca */}
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
         <div style={{width:26,height:26,borderRadius:6,background:GLD,color:"#000",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:12,flexShrink:0}}>{idx+1}</div>
         <div style={{flex:1}}>
           <div style={{fontFamily:"monospace",fontWeight:800,fontSize:16,color:T1}}>{mm}:{ss.toString().padStart(2,"0")}</div>
@@ -2207,11 +2217,11 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
         <button onClick={onDelete} style={{padding:"6px 10px",borderRadius:6,background:`${RED}18`,color:RED,fontSize:13,border:"none",cursor:"pointer",flexShrink:0}}>🗑</button>
       </div>
 
-      {/* Banner de auto-sugerencia (solo si queda 1 barco esperando la boya esperada) */}
+      {/* Banner de auto-sugerencia: solo si queda 1 barco esperando la boya esperada */}
       {onlyOne && !boatId && expectedLegDef && (
         <div style={{
           background:`${expectedLegDef.col}18`, border:`1px solid ${expectedLegDef.col}66`,
-          borderRadius:8, padding:"8px 10px", marginBottom:8, display:"flex",
+          borderRadius:8, padding:"8px 10px", marginBottom:10, display:"flex",
           alignItems:"center", gap:8, flexWrap:"wrap"
         }}>
           <div style={{flex:"1 1 auto", minWidth:140}}>
@@ -2221,47 +2231,62 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
               {onlyOne.bowNum?`${onlyOne.bowNum} `:""}{onlyOne.name}
             </div>
           </div>
-          <button onClick={()=>{ setBoatId(onlyOne.id); }} style={{
+          <button onClick={()=>setBoatId(onlyOne.id)} style={{
             padding:"8px 14px",borderRadius:7,background:onlyOne.color||GRN,color:"#fff",
             border:"none",fontSize:12,fontWeight:800,cursor:"pointer",flexShrink:0
           }}>Sí, es este</button>
         </div>
       )}
 
-      {/* Cabecera del selector */}
-      <div style={{fontSize:9,color:T2,marginBottom:4}}>
-        {expectedLegDef
-          ? <>Por orden, deben pasar <b style={{color:expectedLegDef.col}}>{expectedLegDef.label}</b>:</>
-          : <>¿Qué barco pasó?</>}
-      </div>
-
-      {/* Grupo 1: barcos esperando la boya esperada (ordenados por velocidad) */}
-      {waiting.length > 0 && (
-        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:past.length||finished.length?6:8}}>
-          {waiting.map(b => (
-            <Pill key={b.id} b={b} suggested={onlyOne?.id===b.id && !boatId}/>
-          ))}
-        </div>
-      )}
-
-      {/* Grupo 2: barcos que ya pasaron esa boya (atenuados) */}
-      {past.length > 0 && (
-        <>
-          <div style={{fontSize:9,color:T3,marginBottom:3,marginTop:4}}>Ya pasaron:</div>
-          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:finished.length?6:8}}>
-            {past.map(b => <Pill key={b.id} b={b} dim/>)}
+      {/* GRUPO 1: barcos esperando la boya esperada (GRANDES Y DESTACADOS) */}
+      {waiting.length > 0 && expectedLegDef && (
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:10,color:T2,marginBottom:5,fontWeight:700}}>
+            <span style={{display:"inline-block",width:8,height:8,borderRadius:2,background:expectedLegDef.col,marginRight:5,verticalAlign:"middle"}}/>
+            Por pasar <b style={{color:expectedLegDef.col}}>{expectedLegDef.label}</b>{waiting.length>1?` (${waiting.length} barcos, el más rápido primero)`:""}:
           </div>
-        </>
-      )}
-
-      {/* Grupo 3: barcos que ya llegaron a meta */}
-      {finished.length > 0 && (
-        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
-          {finished.map(b => <Pill key={b.id} b={b}/>)}
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {waiting.map(b => (
+              <PillBig key={b.id} b={b} suggested={onlyOne?.id===b.id}/>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* Siguiente boya automática del barco elegido */}
+      {/* GRUPO 2: ya pasaron — sub-agrupados por boya destino */}
+      {pastLegNumbers.length > 0 && (
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:10,color:T3,marginBottom:5,fontWeight:600}}>Ya pasaron · ahora rumbo a:</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {pastLegNumbers.map(ln => {
+              const ldef = legs[ln-1];
+              const arr = pastByLeg[ln];
+              return (
+                <div key={ln} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span style={{
+                    fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:10,
+                    background:`${ldef?.col||BDR}22`, color:ldef?.col||T2,
+                    border:`1px solid ${ldef?.col||BDR}55`, flexShrink:0
+                  }}>→ {ldef?.label||`B${ln}`}</span>
+                  {arr.map(b => <PillSmall key={b.id} b={b}/>)}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* GRUPO 3: terminaron */}
+      {finished.length > 0 && (
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:10,color:T3,marginBottom:5,fontWeight:600}}>Llegaron a meta:</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+            {finished.map(b => <PillSmall key={b.id} b={b} finished/>)}
+          </div>
+        </div>
+      )}
+
+      {/* Siguiente boya del barco elegido (confirmación visual) */}
       {boatId && nlDef && (
         <div style={{marginBottom:10}}>
           <div style={{fontSize:9,color:T2,marginBottom:4}}>Se registrará en:</div>
@@ -2715,10 +2740,10 @@ function TabEnVivo({state,setState,role="patron"}){
               </div>
             )}
 
-            {/* Tiempos ya asignados (resumen, para editar/borrar) */}
+            {/* Tiempos ya asignados — agrupados por boya, con gaps respecto al líder y al nuestro */}
             {passages.length>0&&(
               <div style={{marginTop:16}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                   <div style={{fontSize:11,color:T2,fontWeight:700}}>✅ Tiempos asignados ({passages.length})</div>
                   <button onClick={()=>setConfirm({msg:"¿Borrar TODOS los tiempos de esta prueba? (no afecta a resultados oficiales)",onOk:()=>{
                       const rid=activeRace?.id;
@@ -2729,24 +2754,113 @@ function TabEnVivo({state,setState,role="patron"}){
                     🗑 Limpiar todos
                   </button>
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                  {[...passages].sort((a,z)=>z.realTime-a.realTime).map((p,i)=>{
-                    const b=fleet.find(x=>x.id===p.boatId || cloud.normSail(x.sailNo)===cloud.normSail(p.boatSailNo) || cloud.normSail(x.sailNo)===cloud.normSail(p.boatId));
-                    const el=startTime?Math.round((p.realTime-startTime)/1000):0;
-                    const neg=el<0; const am=Math.abs(el); const mm=Math.floor(am/60),ss=am%60;
-                    return(
-                      <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:CARD2,borderRadius:7}}>
-                        <div style={{width:8,height:24,borderRadius:2,background:b?.color||BDR,flexShrink:0}}/>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:11,fontWeight:700,color:T1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b?.name||p.boatSailNo||p.boatId}</div>
-                          <div style={{fontSize:9,color:neg?RED:T2}}>{legs[p.leg-1]?.label||`Boya ${p.leg}`} · {neg?"⚠ tiempo inválido":`${mm}:${ss.toString().padStart(2,"0")}`}</div>
-                        </div>
-                        <button onClick={()=>setConfirm({msg:`¿Borrar el paso de ${b?.name||"este barco"}?`,onOk:()=>updRace(r=>({...r,passages:r.passages.filter(x=>x!==p)}))})}
-                          style={{padding:"4px 8px",borderRadius:5,background:`${RED}18`,color:RED,fontSize:11,border:"none",cursor:"pointer",flexShrink:0}}>🗑</button>
-                      </div>
-                    );
-                  })}
-                </div>
+                {(() => {
+                  // Agrupar passages por boya (leg)
+                  const byLeg = {};
+                  for (const p of passages) {
+                    if (!byLeg[p.leg]) byLeg[p.leg] = [];
+                    byLeg[p.leg].push(p);
+                  }
+                  // Helper: matchear passage a barco
+                  const findBoat = p => fleet.find(x =>
+                    x.id===p.boatId ||
+                    cloud.normSail(x.sailNo)===cloud.normSail(p.boatSailNo) ||
+                    cloud.normSail(x.sailNo)===cloud.normSail(p.boatId));
+                  // Tiempo del nuestro en cada boya (para gaps relativos)
+                  const ownTimeAtLeg = {};
+                  for (const p of passages) {
+                    const b = findBoat(p);
+                    if (b?.id === ownId) ownTimeAtLeg[p.leg] = p.realTime;
+                  }
+                  // Mostrar boyas en orden (1, 2, 3...)
+                  const legNumbers = Object.keys(byLeg).map(Number).sort((a,b) => a-b);
+                  return (
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {legNumbers.map(legN => {
+                        const legDef = legs[legN-1];
+                        // Ordenar por tiempo cronológico (primero en pasar = arriba)
+                        const list = [...byLeg[legN]].sort((a,b) => a.realTime - b.realTime);
+                        const t0 = list[0].realTime; // líder de la boya
+                        const ownT = ownTimeAtLeg[legN];
+                        return (
+                          <div key={legN}>
+                            {/* Cabecera de boya */}
+                            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,padding:"3px 0",borderBottom:`1px solid ${legDef?.col||BDR}33`}}>
+                              <span style={{display:"inline-block",width:9,height:9,borderRadius:2,background:legDef?.col||BDR}}/>
+                              <span style={{fontSize:10,fontWeight:800,color:T1,letterSpacing:0.3}}>{legDef?.label||`Boya ${legN}`}</span>
+                              <span style={{fontSize:9,color:T3}}>· {list.length} barco{list.length!==1?"s":""}</span>
+                            </div>
+                            {/* Lista de barcos en esa boya */}
+                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                              {list.map((p, i) => {
+                                const b = findBoat(p);
+                                const isOwn = b?.id === ownId;
+                                const el = startTime?Math.round((p.realTime-startTime)/1000):0;
+                                const neg = el<0; const am=Math.abs(el); const mm=Math.floor(am/60),ss=am%60;
+                                // Gap vs líder de la boya
+                                const gapLeader = Math.round((p.realTime - t0)/1000);
+                                const gL_m = Math.floor(gapLeader/60), gL_s = gapLeader%60;
+                                // Gap vs nuestro (si nuestro pasó la boya y no es el propio)
+                                const showOwnGap = ownT != null && !isOwn;
+                                const gapOwn = showOwnGap ? Math.round((p.realTime - ownT)/1000) : null;
+                                const gO_sign = gapOwn==null ? "" : (gapOwn>0 ? "+" : (gapOwn<0 ? "-" : ""));
+                                const gO_abs = gapOwn==null ? 0 : Math.abs(gapOwn);
+                                const gO_m = Math.floor(gO_abs/60), gO_s = gO_abs%60;
+                                return(
+                                  <div key={i} style={{
+                                    display:"flex",alignItems:"center",gap:8,padding:"6px 9px",
+                                    background:isOwn?`${b.color||ACC}1a`:CARD2,
+                                    borderRadius:6,
+                                    border:isOwn?`1px solid ${b.color||ACC}66`:"1px solid transparent"
+                                  }}>
+                                    {/* Nº de orden en la boya */}
+                                    <div style={{
+                                      width:18,height:18,borderRadius:9,
+                                      background: i===0 ? (legDef?.col||GLD) : CARD,
+                                      color: i===0 ? "#fff" : T2,
+                                      fontSize:10,fontWeight:800,
+                                      display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0
+                                    }}>{i+1}</div>
+                                    {/* Color del barco */}
+                                    <div style={{width:6,height:22,borderRadius:2,background:b?.color||BDR,flexShrink:0}}/>
+                                    {/* Nombre + tu badge */}
+                                    <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:5}}>
+                                      <span style={{fontSize:11,fontWeight:700,color:T1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                                        {b?.bowNum?`${b.bowNum} `:""}{b?.name||p.boatSailNo||p.boatId}
+                                      </span>
+                                      {isOwn && <span style={{fontSize:8,fontWeight:800,padding:"1px 5px",borderRadius:4,background:b.color||ACC,color:"#fff",flexShrink:0}}>TÚ</span>}
+                                    </div>
+                                    {/* Tiempo + gaps */}
+                                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:1,flexShrink:0}}>
+                                      <div style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:neg?RED:T1}}>
+                                        {neg?"⚠":""}{mm}:{ss.toString().padStart(2,"0")}
+                                      </div>
+                                      <div style={{display:"flex",gap:6,fontSize:9,fontFamily:"monospace"}}>
+                                        {i>0 && (
+                                          <span style={{color:T3}} title="vs líder de la boya">
+                                            +{gL_m}:{gL_s.toString().padStart(2,"0")}
+                                          </span>
+                                        )}
+                                        {showOwnGap && (
+                                          <span style={{color: gapOwn>0?RED:GRN, fontWeight:700}} title="vs nuestro">
+                                            {gO_sign}{gO_m}:{gO_s.toString().padStart(2,"0")}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {/* Borrar */}
+                                    <button onClick={()=>setConfirm({msg:`¿Borrar el paso de ${b?.name||"este barco"} por ${legDef?.label}?`,onOk:()=>updRace(r=>({...r,passages:r.passages.filter(x=>x!==p)}))})}
+                                      style={{padding:"3px 7px",borderRadius:5,background:`${RED}18`,color:RED,fontSize:10,border:"none",cursor:"pointer",flexShrink:0}}>🗑</button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
