@@ -3794,6 +3794,34 @@ function ManualFleetPaste({onFleetParsed}){
     r.readAsDataURL(file);
   });
 
+  // Llama a la API y reintenta automáticamente hasta 3 veces si hay rate limit,
+  // esperando 20s entre intentos. `sourceLabel` describe de dónde viene la petición
+  // (texto, foto, PDF) para que el mensaje de error sea preciso.
+  const callApiWithRetry = async (body, sourceLabel) => {
+    for(let attempt=1; attempt<=3; attempt++){
+      if(attempt>1) setMsg(`⏱ Rate limit · reintentando (intento ${attempt}/3) en 20s...`);
+      const res = await fetch(CLAUDE_API,{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      const errMsg = data.error?.message || "";
+      const isRateLimit = /rate.?limit|too many|429/i.test(errMsg);
+      if(!isRateLimit) return data;             // OK o error distinto
+      if(attempt === 3){                         // último intento agotado
+        // Mensaje según contexto
+        if(sourceLabel === "text") {
+          throw new Error("⏱ Rate limit persistente. Espera 1-2 minutos y vuelve a pulsar \"Extraer barcos con IA\". Si sigue fallando, reduce el texto pegado a solo las filas de los barcos (sin cabeceras ni info de tripulación).");
+        } else if(sourceLabel === "pdf") {
+          throw new Error("⏱ Rate limit persistente. Espera 1-2 minutos. Si el PDF es muy grande, prueba a subir solo la primera página o convierte la lista a texto y usa \"Pegar texto\".");
+        } else {
+          throw new Error("⏱ Rate limit persistente. Espera 1-2 minutos y vuelve a intentarlo.");
+        }
+      }
+      await new Promise(r => setTimeout(r, 20000));  // espera 20s antes de reintentar
+    }
+  };
+
   const extractFromFile = async file =>{
     setBusy(true); setMsg("🤖 Analizando imagen con IA...");
     try{
@@ -3815,20 +3843,18 @@ function ManualFleetPaste({onFleetParsed}){
         ? {type:"document", source:{type:"base64", media_type:mime, data:b64}}
         : {type:"image",    source:{type:"base64", media_type:mime, data:b64}};
 
-      const res = await fetch(CLAUDE_API,{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:1200,
-          messages:[{role:"user", content:[
-            contentBlock,
-            {type:"text", text:`Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
+      const body = {
+        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:1200,
+        messages:[{role:"user", content:[
+          contentBlock,
+          {type:"text", text:`Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
 Para cada barco devuelve: name (nombre del barco), sailNo (número de vela), cls (clase: "ORC 0", "ORC 1", etc.), boatType (tipo de barco), gpH (GPH numérico si aparece), bowNum (número de proa si aparece), nation (código país 3 letras).
 Responde ÚNICAMENTE con un array JSON válido, sin markdown ni explicación:
 [{"name":"BARCO","sailNo":"ESP-1","cls":"ORC 0","boatType":"TP52","gpH":561,"bowNum":1,"nation":"ESP"}]`}
-          ]}]
-        })
-      });
-      const data = await res.json();
+        ]}]
+      };
+
+      const data = await callApiWithRetry(body, isPdf?"pdf":"image");
       await processApiResponse(data);
     }catch(e){ setMsg("❌ "+e.message); }
     setBusy(false);
@@ -3838,11 +3864,9 @@ Responde ÚNICAMENTE con un array JSON válido, sin markdown ni explicación:
     if(!text.trim()){ setMsg("Pega primero el texto"); return; }
     setBusy(true); setMsg("🤖 Analizando texto con IA...");
     try{
-      const res = await fetch(CLAUDE_API,{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:3000,
-          messages:[{role:"user", content:
+      const body = {
+        model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:3000,
+        messages:[{role:"user", content:
 `Extrae TODOS los barcos de esta lista de inscritos de regata ORC.
 Para cada barco devuelve: name, sailNo, cls (clase ORC como "ORC 0", "ORC 1", etc.), boatType, gpH (número entero), bowNum (número entero), nation (código 3 letras).
 
@@ -3853,9 +3877,8 @@ Ejemplo de formato correcto:
 
 TEXTO A ANALIZAR:
 ${text.slice(0,5000)}`}]
-        })
-      });
-      const data = await res.json();
+      };
+      const data = await callApiWithRetry(body, "text");
       await processApiResponse(data);
     }catch(e){ setMsg("❌ "+e.message); }
     setBusy(false);
@@ -3863,9 +3886,7 @@ ${text.slice(0,5000)}`}]
 
   const processApiResponse = async data =>{
     if(data.error) {
-      const errMsg = data.error.message||JSON.stringify(data.error);
-      if(errMsg.includes("rate limit")) throw new Error("⏱ Rate limit — espera 1 minuto y vuelve a intentarlo. El PDF es muy grande, prueba a subir solo la primera página.");
-      throw new Error(errMsg);
+      throw new Error(data.error.message||JSON.stringify(data.error));
     }
     const raw = (data.content||[]).map(c=>c.text||"").join("").trim();
     if(!raw) throw new Error("La IA no devolvió respuesta. Verifica que la API key es válida.");
@@ -4259,10 +4280,9 @@ function NewChampWizard({onClose, onCreate}){
   const finish = ()=>{
     if(!champName.trim()||!fleet.length){setErr("Faltan datos.");return;}
     const ownBoat = fleet.find(b=>b.id===ownId)||fleet[0];
-    if(!hasValidRating(ownBoat,scoring)){
-      setErr(`Tu barco (${ownBoat?.name}) no tiene certificado ORC válido para ${scoringMode(scoring).label}. Súbelo en ⚙️ Barcos antes de crear el campeonato.`);
-      return;
-    }
+    // Permitir crear el campeonato aunque tu barco no tenga cert ORC todavía:
+    // los barcos sin rating quedarán como "pendientes" (no puntúan hasta que
+    // se suba el certificado). El aviso amarillo arriba ya lo deja claro.
     // Guardar también los links descubiertos
     onCreate({
       name: champName.trim(),
