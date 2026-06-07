@@ -424,3 +424,165 @@ async function hydrate(sb, champ) {
     activeRaceId: racesOut[0]?.id || "r1",
   };
 }
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  BIBLIOTECA DE BARCOS — guarda barcos por sailNo entre campeonatos       ║
+// ║                                                                          ║
+// ║  Requiere la tabla `boats_library` en Supabase (ver ORC_boats_library.sql)║
+// ║  Se rellena al subir un certificado; se consulta al crear un campeonato. ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
+// Helper interno: barco app → fila SQL
+function _boatToLibRow(b) {
+  return {
+    sail_no_norm:   normSail(b.sailNo || ""),
+    sail_no:        (b.sailNo || "").trim(),
+    name:           (b.name || "").trim(),
+    boat_type:      b.boatType || b.rating?.boatType || null,
+    bow_num:        b.bowNum != null ? Number(b.bowNum) : null,
+    cls:            b.cls || null,
+    nation:         b.nation || null,
+    color:          b.color || null,
+    hull_color:     b.hullColor || null,
+    rating:         b.rating || null,
+    gp_h:           b.gpH != null ? Number(b.gpH) : null,
+    cert_no:        b.rating?.certNo || null,
+    cert_ref:       b.rating?.certRef || b.rating?.cert_ref || null,
+    valid_until:    b.rating?.validUntil || null,
+    photo_beat_url: b.photoBeat || b.photo_beat_url || null,
+    photo_run_url:  b.photoRun  || b.photo_run_url  || null,
+    trim_bands:     b.trimBands || null,
+    notes:          b.notes || null,
+    source:         b.source || "manual",
+    last_seen_at:   new Date().toISOString(),
+  };
+}
+
+// Helper interno: fila SQL → barco app
+function _libRowToBoat(row) {
+  if (!row) return null;
+  return {
+    sailNo:    row.sail_no,
+    name:      row.name,
+    boatType:  row.boat_type,
+    bowNum:    row.bow_num,
+    cls:       row.cls,
+    nation:    row.nation,
+    color:     row.color,
+    hullColor: row.hull_color,
+    rating:    row.rating,
+    gpH:       row.gp_h,
+    photoBeat: row.photo_beat_url,
+    photoRun:  row.photo_run_url,
+    trimBands: row.trim_bands || [],
+    notes:     row.notes,
+    _library: {
+      cert_no:      row.cert_no,
+      cert_ref:     row.cert_ref,
+      valid_until:  row.valid_until,
+      source:       row.source,
+      last_seen_at: row.last_seen_at,
+      updated_at:   row.updated_at,
+    },
+  };
+}
+
+// Busca UN barco por sailNo. Devuelve barco listo para la app, o null.
+export async function getBoatFromLibrary(sailNo) {
+  const sb = getClient();
+  if (!sb) return null;
+  const key = normSail(sailNo || "");
+  if (!key) return null;
+  const { data, error } = await sb
+    .from("boats_library")
+    .select("*")
+    .eq("sail_no_norm", key)
+    .maybeSingle();
+  if (error) { console.warn("getBoatFromLibrary:", error.message); return null; }
+  return _libRowToBoat(data);
+}
+
+// Busca varios barcos a la vez. Devuelve Map(sailNoNorm → barco).
+export async function getBoatsFromLibrary(sailNos) {
+  const sb = getClient();
+  if (!sb) return new Map();
+  const keys = (sailNos || []).map(s => normSail(s || "")).filter(Boolean);
+  if (!keys.length) return new Map();
+  const { data, error } = await sb
+    .from("boats_library")
+    .select("*")
+    .in("sail_no_norm", keys);
+  if (error) { console.warn("getBoatsFromLibrary:", error.message); return new Map(); }
+  const map = new Map();
+  for (const row of (data || [])) map.set(row.sail_no_norm, _libRowToBoat(row));
+  return map;
+}
+
+// UPSERT por sail_no_norm. Hace merge no-destructivo de fotos/color/notas
+// (lo que viene en el barco nuevo gana; si está vacío se conserva el anterior).
+export async function saveBoatToLibrary(boat) {
+  const sb = getClient();
+  if (!sb) return null;
+  const key = normSail(boat.sailNo || "");
+  if (!key) { console.warn("saveBoatToLibrary: sailNo vacío"); return null; }
+
+  const existing = await getBoatFromLibrary(boat.sailNo);
+  const merged = {
+    ...boat,
+    color:     boat.color     || existing?.color,
+    hullColor: boat.hullColor || existing?.hullColor,
+    photoBeat: boat.photoBeat || existing?.photoBeat,
+    photoRun:  boat.photoRun  || existing?.photoRun,
+    trimBands: (boat.trimBands && boat.trimBands.length) ? boat.trimBands : (existing?.trimBands || []),
+    notes:     boat.notes     || existing?.notes,
+    rating:    boat.rating    || existing?.rating,
+    gpH:       boat.gpH       || existing?.gpH,
+  };
+
+  const row = _boatToLibRow(merged);
+  const { data, error } = await sb
+    .from("boats_library")
+    .upsert(row, { onConflict: "sail_no_norm" })
+    .select()
+    .maybeSingle();
+  if (error) { console.warn("saveBoatToLibrary:", error.message); return null; }
+  return _libRowToBoat(data);
+}
+
+// Lista todos los barcos (orden alfabético). Para pantalla "Mi biblioteca".
+export async function listLibraryBoats() {
+  const sb = getClient();
+  if (!sb) return [];
+  const { data, error } = await sb
+    .from("boats_library")
+    .select("*")
+    .order("name", { ascending: true });
+  if (error) { console.warn("listLibraryBoats:", error.message); return []; }
+  return (data || []).map(_libRowToBoat);
+}
+
+// Borra un barco de la biblioteca.
+export async function deleteBoatFromLibrary(sailNo) {
+  const sb = getClient();
+  if (!sb) return false;
+  const key = normSail(sailNo || "");
+  if (!key) return false;
+  const { error } = await sb
+    .from("boats_library")
+    .delete()
+    .eq("sail_no_norm", key);
+  if (error) { console.warn("deleteBoatFromLibrary:", error.message); return false; }
+  return true;
+}
+
+// Marca un barco como "visto recientemente" (last_seen_at).
+export async function touchBoatInLibrary(sailNo) {
+  const sb = getClient();
+  if (!sb) return;
+  const key = normSail(sailNo || "");
+  if (!key) return;
+  await sb
+    .from("boats_library")
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq("sail_no_norm", key);
+}
