@@ -6133,6 +6133,14 @@ export default function App(){
     return () => { cancelled = true; };
   }, [authUser?.id, state?._cloudId]);
 
+  // Fase 3: si soy crew y la pestaña actual no es Regatas/En Vivo/Tablas, redirigir
+  useEffect(() => {
+    const isCrewNow = !!authUser && myRole === "crew";
+    if (isCrewNow && ![1,2,3].includes(tab)) {
+      setTab(2); // En Vivo por defecto para tripulante
+    }
+  }, [authUser, myRole, tab]);
+
   // Rol del dispositivo actual (guardado localmente, no compartido)
   const [role,       setRole]       = useState(()=>localStorage.getItem('orc-role')||'patron');
   const [theme,      setTheme]      = useState(()=>localStorage.getItem('orc-theme')||'dark');
@@ -6431,13 +6439,6 @@ export default function App(){
   const TABS = isCrew
     ? ALL_TABS.filter(t => [1,2,3].includes(t.idx))   // Crew solo ve Regatas, En Vivo, Tablas
     : ALL_TABS;
-
-  // Si el rol cambia a crew y el tab actual no es visible, saltar a En Vivo
-  useEffect(() => {
-    if (isCrew && ![1,2,3].includes(tab)) {
-      setTab(2); // En Vivo por defecto para tripulante
-    }
-  }, [isCrew, tab]);
 
   return(
     <ErrorBoundary>
