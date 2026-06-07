@@ -918,20 +918,21 @@ Responde SOLO JSON, sin markdown:
     e.target.value="";
   };
 
-  // Abre la web pública de ORC en una pestaña aparte y copia el sailNo al
-  // portapapeles para que el usuario lo pegue en el buscador.
+  // Abre la web pública de búsqueda de certificados de ORC con el sailNo
+  // pre-rellenado en el portapapeles, para pegar y buscar de un solo gesto.
   const searchInOrc = async () => {
     const sn = (sailNo||"").trim();
     if(!sn){ setMsg("❌ Este barco no tiene nº de vela — añádelo primero arriba"); return; }
     try{
       await navigator.clipboard.writeText(sn);
-      setMsg(`📋 SailNo "${sn}" copiado al portapapeles. Pégalo en el buscador de la web de ORC, descarga el PDF y vuelve aquí para subirlo.`);
+      setMsg(`📋 SailNo "${sn}" copiado al portapapeles. En la web de ORC pégalo en el buscador, descarga el PDF y vuelve aquí para subirlo.`);
     }catch{
-      setMsg(`📋 SailNo "${sn}" listo — pégalo en el buscador de ORC. Web abierta en pestaña aparte.`);
+      setMsg(`📋 SailNo "${sn}" — pégalo en el buscador de ORC (Ctrl+V). Web abierta en pestaña aparte.`);
     }
-    // Abrimos la home de la base de datos pública ORC. Si en el futuro
-    // confirmamos una URL de búsqueda con parámetros, la pondremos aquí.
-    window.open("https://data.orc.org/", "_blank", "noopener,noreferrer");
+    // Página de búsqueda pública (Sailor Services). Le pasamos SailNo por query
+    // por si en algún momento pre-rellena; sino el sailNo está en el portapapeles.
+    const url = `https://data.orc.org/public/WPub.dll?action=SrchCert&xslp=scert.php&SailNo=${encodeURIComponent(sn)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   return(
