@@ -169,7 +169,7 @@ const NUM_ES={
   "uno":1,"dos":2,"tres":3,"cuatro":4,"cinco":5,"seis":6,
   "siete":7,"ocho":8,"nueve":9,"diez":10,"once":11,
   "doce":12,"trece":13,"catorce":14,"quince":15,"dieciséis":16,
-  "uno":1,"barco uno":1,"número uno":1,"barco dos":2,"número dos":2,
+  "barco uno":1,"número uno":1,"barco dos":2,"número dos":2,
   "barco tres":3,"barco cuatro":4,"barco cinco":5,"barco seis":6,
   "barco siete":7,"barco ocho":8,"barco nueve":9,"barco diez":10,
 };
@@ -1661,7 +1661,7 @@ function BoatPhotoDbTab({fleet, regattaName, onColorUpdate}){
                   </div>
                 ))}
                 <button onClick={()=>save(b.id,beatUrl||null,runUrl||null)} disabled={saving===b.id||analyzingColors===key}
-                  style={{width:"100%",padding:"9px 0",borderRadius:7,background:saving===b.id||analyzingColors===key?CARD2:GRN,color:"#fff",borderRadius:7,fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>
+                  style={{width:"100%",padding:"9px 0",borderRadius:7,background:saving===b.id||analyzingColors===key?CARD2:GRN,color:"#fff",fontSize:12,fontWeight:700,border:"none",cursor:"pointer"}}>
                   {saving===b.id?"⏳ Guardando...":analyzingColors===key?"🎨 Analizando colores...":"💾 Guardar fotos"}
                 </button>
                 {/* Botón analizar colores de foto ya guardada */}
@@ -2940,7 +2940,7 @@ function TabEnVivo({state,setState,role="patron"}){
         {sub==="std"&&(
           <LiveStandings
             standings={standings} ldr={ldr} ownId={ownId} ownSt={ownSt}
-            fleet={fleet} course={course} own={own} ownSt={ownSt}
+            fleet={fleet} course={course} own={own}
             state={state} activeRace={activeRace} passages={passages} startTime={startTime}/>
         )}
 
