@@ -992,17 +992,36 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
         setMsg(`❌ ORC API: ${data.error||res.statusText}. Prueba el botón verde "Subir HTML".`);
         setBusy(false); return;
       }
-      // El formato JSON de ORC tiene muchos campos. Aceptamos varias variantes.
-      // Loggeamos en consola la primera vez para poder debuggear el formato real.
-      console.log("📦 ORC API response para", sn, ":", data);
+      // Log completo en consola para debug del formato real
+      console.log("📦 ORC API completa para", sn, ":", data);
       if(data.raw){
-        setMsg(`❌ ORC devolvió formato no-JSON (RMS). Mira la consola del navegador (F12) y pásame el output a Claude para ajustar el parser.`);
+        setMsg(`❌ ORC devolvió formato no-JSON (RMS). Mira la consola (F12).`);
         setBusy(false); return;
       }
-      const rating = parseOrcJson(data);
+
+      // ORC devuelve un JSON con esta estructura típica:
+      //   { rms: [ {barco1} ], Countries: [...], ScoringOptions: [...] }
+      // El barco viene en data.rms[0]. Si rms está vacío, no encontró el barco.
+      let boatData = null;
+      if (Array.isArray(data.rms) && data.rms.length > 0) {
+        boatData = data.rms[0];
+        console.log("🛥 Datos del barco desde rms[0]:", boatData);
+      } else if (data.rms && typeof data.rms === "object" && !Array.isArray(data.rms)) {
+        boatData = data.rms;
+      } else {
+        // No hay rms o está vacío
+        setMsg(`⚠️ ORC no encontró el barco con sailNo "${sn}". Verifica el formato (ej: ESP-52801, USA-520) o usa el botón verde "Subir HTML".`);
+        setBusy(false); return;
+      }
+
+      const rating = parseOrcJson(boatData);
       const s = rating.single || {};
       if(s.wl_tot==null && s.wl_tod==null && s.ap_tod==null){
-        setMsg(`⚠️ No encontré los single numbers en el JSON. Pásame el output de consola (F12) para ajustar el parser. De momento usa el botón verde "Subir HTML".`);
+        // No encontramos single numbers en el sitio esperado. Loggeamos las claves
+        // disponibles para ayudar al usuario a reportarlas.
+        const keys = Object.keys(boatData).slice(0, 30).join(", ");
+        console.warn("🔍 Claves disponibles en boatData:", Object.keys(boatData));
+        setMsg(`⚠️ ORC devolvió datos pero no encontré los single numbers. Claves disponibles: ${keys.slice(0,150)}... Mira la consola (F12) y pásamelas.`);
         setBusy(false); return;
       }
       onRatingExtracted(rating);
@@ -4964,11 +4983,231 @@ function NewChampWizard({onClose, onCreate}){
   );
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  PANTALLA: Mi biblioteca de barcos                                       ║
+// ║  Lista todos los barcos guardados en boats_library (Supabase).           ║
+// ║  Permite ver, eliminar, exportar e importar.                             ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+function LibraryManager({onClose}){
+  const [boats, setBoats] = useState(null);  // null = cargando, [] = vacío
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [msg, setMsg] = useState("");
+  const importRef = useRef(null);
+
+  const load = async ()=>{
+    setErr("");
+    if(!cloud.isCloudEnabled()){
+      setErr("⚠️ Supabase no está configurado. Configúralo en Ajustes para usar la biblioteca compartida.");
+      setBoats([]);
+      return;
+    }
+    try{
+      const list = await cloud.listLibraryBoats();
+      setBoats(list || []);
+    }catch(e){
+      setErr("❌ Error: " + e.message);
+      setBoats([]);
+    }
+  };
+  useEffect(()=>{ load(); },[]);
+
+  const handleDelete = async (sailNo, name) => {
+    setBusy(true);
+    try{
+      const ok = await cloud.deleteBoatFromLibrary(sailNo);
+      if(ok) setMsg(`✅ Borrado: ${name||sailNo}`);
+      else   setMsg(`❌ No se pudo borrar ${sailNo}`);
+      await load();
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+    setConfirmDel(null);
+    setTimeout(()=>setMsg(""), 3000);
+  };
+
+  const handleExport = () => {
+    const data = JSON.stringify(boats||[], null, 2);
+    const blob = new Blob([data], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `orc-biblioteca-barcos-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    setMsg(`✅ Exportados ${boats?.length||0} barcos`);
+    setTimeout(()=>setMsg(""), 3000);
+  };
+
+  const handleImport = async (e) => {
+    const file = e.target.files?.[0];
+    if(!file) return;
+    setBusy(true);
+    try{
+      const text = await file.text();
+      const arr = JSON.parse(text);
+      if(!Array.isArray(arr)) throw new Error("El JSON debe ser un array de barcos");
+      let ok = 0, fail = 0;
+      for(const b of arr){
+        if(!b.sailNo){ fail++; continue; }
+        try{ await cloud.saveBoatToLibrary(b); ok++; }catch{ fail++; }
+      }
+      setMsg(`✅ Importados ${ok} barcos${fail?` · ${fail} fallidos`:""}`);
+      await load();
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+    e.target.value = "";
+    setTimeout(()=>setMsg(""), 5000);
+  };
+
+  const filtered = (boats||[]).filter(b=>{
+    if(!filter.trim()) return true;
+    const q = filter.toLowerCase();
+    return (b.name||"").toLowerCase().includes(q)
+      || (b.sailNo||"").toLowerCase().includes(q)
+      || (b.boatType||"").toLowerCase().includes(q);
+  });
+
+  const isExpired = (date) => {
+    if(!date) return false;
+    try{ return new Date(date) < new Date(); }catch{ return false; }
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:1000,
+      display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"6px",overflowY:"auto"}}>
+      <div style={{background:BG,maxWidth:520,width:"100%",borderRadius:10,padding:"14px 12px",
+        border:`1px solid ${BDR}`,marginTop:"40px",marginBottom:"40px"}}>
+        {/* Cabecera */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:T1}}>📚 Mi biblioteca de barcos</div>
+            <div style={{fontSize:10,color:T2,marginTop:2}}>
+              {boats===null ? "Cargando..." : `${filtered.length} de ${boats.length} barco${boats.length!==1?"s":""}`}
+              {boats?.length>0 && " · datos compartidos en Supabase"}
+            </div>
+          </div>
+          <button onClick={onClose} style={{background:"none",color:T2,fontSize:18,border:"none",cursor:"pointer",padding:"4px 10px"}}>✕</button>
+        </div>
+
+        {err && <div style={{padding:"8px 10px",background:`${RED}15`,border:`1px solid ${RED}44`,borderRadius:7,fontSize:10,color:RED,marginBottom:10}}>{err}</div>}
+        {msg && <div style={{padding:"8px 10px",background:msg.startsWith("✅")?`${GRN}15`:`${RED}15`,border:`1px solid ${msg.startsWith("✅")?GRN:RED}44`,borderRadius:7,fontSize:10,color:msg.startsWith("✅")?GRN:RED,marginBottom:10}}>{msg}</div>}
+
+        {/* Acciones globales */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
+          <button onClick={load} disabled={busy}
+            style={{padding:"7px 0",fontSize:10,background:`${CYN}18`,color:CYN,border:`1px solid ${CYN}44`,borderRadius:6,fontWeight:700,cursor:"pointer"}}>
+            🔄 Recargar
+          </button>
+          <button onClick={handleExport} disabled={busy||!boats?.length}
+            style={{padding:"7px 0",fontSize:10,background:`${GRN}18`,color:GRN,border:`1px solid ${GRN}44`,borderRadius:6,fontWeight:700,cursor:"pointer"}}>
+            ⬇ Exportar JSON
+          </button>
+          <button onClick={()=>importRef.current?.click()} disabled={busy}
+            style={{padding:"7px 0",fontSize:10,background:`${ACC}18`,color:ACC,border:`1px solid ${ACC}44`,borderRadius:6,fontWeight:700,cursor:"pointer"}}>
+            ⬆ Importar JSON
+          </button>
+          <input ref={importRef} type="file" accept=".json,application/json" style={{display:"none"}} onChange={handleImport}/>
+        </div>
+
+        {/* Filtro búsqueda */}
+        {boats?.length>0 && (
+          <input type="text" placeholder="🔍 Filtrar por nombre, sailNo o tipo..." value={filter} onChange={e=>setFilter(e.target.value)}
+            style={{width:"100%",padding:"7px 10px",marginBottom:10,fontSize:11,background:CARD,color:T1,border:`1px solid ${BDR}`,borderRadius:7,boxSizing:"border-box"}}/>
+        )}
+
+        {/* Lista */}
+        {boats===null ? (
+          <div style={{textAlign:"center",padding:30,color:T2,fontSize:11}}>⏳ Cargando...</div>
+        ) : boats.length===0 ? (
+          <div style={{textAlign:"center",padding:"30px 16px",background:CARD,borderRadius:8,border:`1px dashed ${BDR}`}}>
+            <div style={{fontSize:30,marginBottom:8}}>📭</div>
+            <div style={{fontSize:11,color:T2,marginBottom:6,fontWeight:700}}>Biblioteca vacía</div>
+            <div style={{fontSize:10,color:T3,lineHeight:1.5}}>
+              Los barcos se guardan automáticamente cuando subes su certificado ORC<br/>
+              (PDF, HTML o API) en cualquier campeonato.
+            </div>
+          </div>
+        ) : filtered.length===0 ? (
+          <div style={{textAlign:"center",padding:"20px",color:T2,fontSize:11}}>
+            🔍 Ningún barco coincide con "{filter}"
+          </div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"60vh",overflowY:"auto"}}>
+            {filtered.map(b=>{
+              const expired = isExpired(b._library?.valid_until);
+              const s = b.rating?.single || {};
+              return (
+                <div key={b.sailNo} style={{padding:"9px 11px",background:CARD,borderRadius:7,border:`1px solid ${expired?RED+"55":BDR}`}}>
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                        {b.color && <div style={{width:10,height:10,borderRadius:2,background:b.color,flexShrink:0}}/>}
+                        <span style={{fontSize:12,fontWeight:700,color:T1}}>{b.name}</span>
+                        <span style={{fontSize:10,color:T2,fontFamily:"monospace"}}>{b.sailNo}</span>
+                        {b.boatType && <span style={{fontSize:9,color:ACC,background:`${ACC}15`,padding:"1px 6px",borderRadius:4}}>{b.boatType}</span>}
+                      </div>
+                      <div style={{fontSize:9,color:T3,marginTop:4,lineHeight:1.5}}>
+                        {s.wl_tod!=null && <>W/L ToD <strong style={{color:CYN}}>{s.wl_tod}</strong> · </>}
+                        {s.ap_tod!=null && <>AP ToD <strong style={{color:CYN}}>{s.ap_tod}</strong> · </>}
+                        {b.rating?.ta?.beat?.length===9 && <span style={{color:GRN}}>curvas ✓</span>}
+                        {!b.rating && <span style={{color:GLD}}>⚠ sin rating</span>}
+                      </div>
+                      <div style={{fontSize:9,color:expired?RED:T3,marginTop:2}}>
+                        {b._library?.cert_no && <>nº {b._library.cert_no} · </>}
+                        {b._library?.valid_until && <>{expired?"⚠ caducado":"válido hasta"} {b._library.valid_until} · </>}
+                        {b._library?.updated_at && <>actualizado {new Date(b._library.updated_at).toLocaleDateString("es-ES")}</>}
+                      </div>
+                    </div>
+                    <button onClick={()=>setConfirmDel(b)} disabled={busy}
+                      style={{background:`${RED}15`,color:RED,border:`1px solid ${RED}44`,borderRadius:5,padding:"4px 9px",fontSize:10,cursor:"pointer",fontWeight:700,flexShrink:0}}>
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Confirmación de borrado */}
+        {confirmDel && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+            <div style={{background:BG,padding:"16px 14px",borderRadius:10,maxWidth:340,border:`1px solid ${RED}55`}}>
+              <div style={{fontSize:13,fontWeight:700,color:T1,marginBottom:8}}>🗑 Eliminar de la biblioteca</div>
+              <div style={{fontSize:11,color:T2,marginBottom:14,lineHeight:1.5}}>
+                ¿Eliminar <strong style={{color:T1}}>{confirmDel.name}</strong> ({confirmDel.sailNo}) de la biblioteca?<br/>
+                <span style={{color:T3,fontSize:10}}>Esto NO afecta a los campeonatos donde ya está cargado. Solo se borra del repositorio compartido.</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                <button onClick={()=>setConfirmDel(null)} disabled={busy}
+                  style={{padding:"8px 0",fontSize:11,background:CARD,color:T2,border:`1px solid ${BDR}`,borderRadius:6,cursor:"pointer"}}>
+                  Cancelar
+                </button>
+                <button onClick={()=>handleDelete(confirmDel.sailNo, confirmDel.name)} disabled={busy}
+                  style={{padding:"8px 0",fontSize:11,background:RED,color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontWeight:700}}>
+                  {busy?"⏳":"🗑 Eliminar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <button onClick={onClose} style={{width:"100%",marginTop:14,padding:"10px",background:CARD,color:T2,border:`1px solid ${BDR}`,borderRadius:7,fontSize:11,cursor:"pointer",fontWeight:700}}>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, onSyncOrc}){
   const [confirm2,setConfirm2] = useState(null);
   const [clearing,setClearing] = useState(false);
   const [syncing, setSyncing]  = useState(false);
   const [syncMsg, setSyncMsg]  = useState("");
+  const [showLibrary, setShowLibrary] = useState(false);
 
   const clearStorage = async()=>{
     setClearing(true);
@@ -5028,7 +5267,9 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
         <p style={{fontSize:10,color:T2}}>Clasificación ORC en tiempo real · v9</p>
       </div>
 
-      <Btn v="＋ Nuevo campeonato" onClick={onNew} c="grn" fw lg st={{marginBottom:10}}/>
+      <Btn v="＋ Nuevo campeonato" onClick={onNew} c="grn" fw lg st={{marginBottom:8}}/>
+      <Btn v="📚 Mi biblioteca de barcos" onClick={()=>setShowLibrary(true)} c="dim" fw st={{marginBottom:10,fontSize:11}}/>
+      {showLibrary && <LibraryManager onClose={()=>setShowLibrary(false)}/>}
 
       {champsList.length===0 ? (
         <div style={{textAlign:"center",padding:"20px 16px",background:CARD,borderRadius:12,border:`1px solid ${BDR}`}}>
