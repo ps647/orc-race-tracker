@@ -6415,7 +6415,29 @@ export default function App(){
   );
 
   const activeRace=state.races?.find(r=>r.id===state.activeRaceId);
-  const TABS=[{icon:"🏠",label:"Inicio"},{icon:"🏁",label:"Regatas"},{icon:"🚩",label:"En Vivo"},{icon:"📋",label:"Tablas"},{icon:"📊",label:"Result."},{icon:"⚙️",label:"Config"}];
+  // ─── FASE 3: Restricción de pestañas por rol del miembro ────────────────────
+  // Si el usuario está autenticado Y es miembro 'crew' del campeonato actual,
+  // solo ve Regatas / En Vivo / Tablas. El admin ve todo (incluido Inicio, Result, Config).
+  // Los usuarios anónimos (modo legacy joinCode) ven todo como antes — compatibilidad.
+  const ALL_TABS = [
+    {icon:"🏠",label:"Inicio",  idx:0},
+    {icon:"🏁",label:"Regatas", idx:1},
+    {icon:"🚩",label:"En Vivo", idx:2},
+    {icon:"📋",label:"Tablas",  idx:3},
+    {icon:"📊",label:"Result.", idx:4},
+    {icon:"⚙️",label:"Config",  idx:5},
+  ];
+  const isCrew = !!authUser && myRole === "crew";
+  const TABS = isCrew
+    ? ALL_TABS.filter(t => [1,2,3].includes(t.idx))   // Crew solo ve Regatas, En Vivo, Tablas
+    : ALL_TABS;
+
+  // Si el rol cambia a crew y el tab actual no es visible, saltar a En Vivo
+  useEffect(() => {
+    if (isCrew && ![1,2,3].includes(tab)) {
+      setTab(2); // En Vivo por defecto para tripulante
+    }
+  }, [isCrew, tab]);
 
   return(
     <ErrorBoundary>
@@ -6489,16 +6511,17 @@ export default function App(){
           {/* Botón Login / Usuario (Fase 1 auth) */}
           {authUser ? (
             <button onClick={()=>{
-              const ok = window.confirm(`Sesión actual: ${authUser.email}\n\n¿Cerrar sesión?`);
+              const ok = window.confirm(`Sesión actual: ${authUser.email}\nRol en este campeonato: ${myRole==='admin'?'Admin':myRole==='crew'?'Tripulante':'(ninguno)'}\n\n¿Cerrar sesión?`);
               if(ok) cloud.signOut();
             }} style={{
               display:"flex",alignItems:"center",gap:4,padding:"4px 9px",
-              background:`${GRN}22`,border:`1px solid ${GRN}55`,borderRadius:18,cursor:"pointer",flexShrink:0,
-              maxWidth:130
-            }} title={authUser.email}>
-              <span style={{fontSize:11}}>👤</span>
-              <span style={{fontSize:9,color:GRN,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                {authUser.email.split("@")[0]}
+              background:`${myRole==='admin'?GLD:myRole==='crew'?CYN:GRN}22`,
+              border:`1px solid ${myRole==='admin'?GLD:myRole==='crew'?CYN:GRN}55`,
+              borderRadius:18,cursor:"pointer",flexShrink:0,maxWidth:140
+            }} title={`${authUser.email} · ${myRole||'sin rol'}`}>
+              <span style={{fontSize:11}}>{myRole==='admin'?'👑':myRole==='crew'?'⛵':'👤'}</span>
+              <span style={{fontSize:9,color:myRole==='admin'?GLD:myRole==='crew'?CYN:GRN,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                {myRole==='admin' ? 'Admin' : myRole==='crew' ? 'Tripulante' : authUser.email.split("@")[0]}
               </span>
             </button>
           ) : (
@@ -6564,10 +6587,10 @@ export default function App(){
           );
           return (
             <div style={{display:"flex",background:CARD,borderTop:`1px solid ${BDR}`,flexShrink:0}}>
-              {TABS.map(({icon,label},i)=>(
-                <button key={i} onClick={()=>setTab(i)} style={{flex:1,padding:"7px 2px 5px",background:"none",display:"flex",flexDirection:"column",alignItems:"center",gap:1,borderTop:tab===i?`2px solid ${ACC}`:"2px solid transparent"}}>
+              {TABS.map(({icon,label,idx})=>(
+                <button key={idx} onClick={()=>setTab(idx)} style={{flex:1,padding:"7px 2px 5px",background:"none",display:"flex",flexDirection:"column",alignItems:"center",gap:1,borderTop:tab===idx?`2px solid ${ACC}`:"2px solid transparent"}}>
                   <span style={{fontSize:16,lineHeight:1}}>{icon}</span>
-                  <span style={{fontSize:7,fontWeight:700,color:tab===i?ACC:T2}}>{label}</span>
+                  <span style={{fontSize:7,fontWeight:700,color:tab===idx?ACC:T2}}>{label}</span>
                 </button>
               ))}
             </div>
