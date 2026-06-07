@@ -4218,9 +4218,100 @@ Responde ÚNICAMENTE con un array JSON válido, sin markdown ni explicación:
     setBusy(false);
   };
 
+  // ─── PARSER LOCAL DE TEXTO PEGADO (sin IA) ─────────────────────────────────
+  // Detecta filas de barcos en texto plano pegado de listas de inscritos.
+  // Estrategia: localizar el sailNo (patrón PAIS+NUMERO) en cada línea y
+  // extraer alrededor: bow number antes, nombre del barco después.
+  // Si encuentra >= 2 barcos con sailNo, devuelve la lista. Si no, null.
+  const extractBoatsLocally = (rawText) => {
+    if (!rawText || !rawText.trim()) return null;
+    // Regex sailNo: 2-4 letras + opcional guion/espacio + 2-7 dígitos
+    const sailRe = /\b([A-Z]{2,4})\s*-?\s*(\d{2,7})\b/;
+    const lines = rawText.split(/\r?\n/);
+    const boats = [];
+    const seen = new Set();
+
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\u00A0/g, " ").trim();
+      if (!line || line.length < 8) continue;
+      // Saltar cabeceras y separadores típicos
+      if (/^(P[OÓ]S|POS|CLUB|VELA|BARCO|ARMADOR|PATR[OÓ]N|CLASE|RANK)\b/i.test(line)) continue;
+      if (/^[-=_*\s]+$/.test(line)) continue;
+
+      const m = line.match(sailRe);
+      if (!m) continue;
+      const country = m[1].toUpperCase();
+      const number  = m[2];
+      const sailNo  = `${country}-${number}`;
+      if (seen.has(sailNo)) continue;
+
+      // Bow number = primer número al inicio de la línea (si existe)
+      const bowMatch = line.match(/^\s*(\d{1,3})[\s\t]/);
+      const bowNum = bowMatch ? parseInt(bowMatch[1], 10) : null;
+
+      // Posición del sailNo en la línea
+      const sailNoIdx = m.index;
+      const sailNoLen = m[0].length;
+      const afterSail = line.slice(sailNoIdx + sailNoLen).trim();
+
+      // El nombre del barco viene después del sailNo. Dividimos por tabs o
+      // múltiples espacios (típico en pegado desde tablas). El primer "token"
+      // grande es el nombre del barco.
+      const tokens = afterSail.split(/\t+|\s{2,}/).map(s => s.trim()).filter(Boolean);
+      let boatName = tokens[0] || "";
+      // Si el primer token parece muy corto (e.g. otra clave), miramos el siguiente
+      if (boatName && boatName.length < 3 && tokens[1]) boatName = tokens[1];
+      // Limpiar: quitar paréntesis con info adicional y prefijos genéricos
+      boatName = boatName.replace(/\([^)]*\)/g, "").trim().toUpperCase();
+      if (!boatName) continue;
+
+      // El armador suele ser el siguiente token (informativo, no crítico)
+      const owner = tokens[1] || "";
+
+      boats.push({
+        name: boatName,
+        sailNo,
+        bowNum,
+        nation: country.length === 3 ? country : null,
+        cls: null,        // No podemos saber la clase sin IA
+        boatType: null,   // Tampoco el tipo de barco
+        gpH: null,        // Ni el rating
+        _owner: owner || null,
+      });
+      seen.add(sailNo);
+    }
+    return boats.length >= 2 ? boats : null;
+  };
+
   const extractFromText = async()=>{
     if(!text.trim()){ setMsg("Pega primero el texto"); return; }
-    setBusy(true); setMsg("🤖 Analizando texto con IA...");
+
+    // PASO 1: intentar extracción LOCAL sin IA (gratis, instantáneo, sin rate limit)
+    setBusy(true);
+    setMsg("📋 Analizando texto localmente (sin IA)...");
+    const localBoats = extractBoatsLocally(text);
+
+    if (localBoats && localBoats.length >= 2) {
+      // Éxito con parser local — no llamamos a IA
+      const COLORS=["#e74c3c","#3498db","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22","#e91e63","#00bcd4","#8bc34a","#ff5722","#607d8b","#795548","#ff9800","#673ab7"];
+      const fleet = localBoats.map((b,i)=>({
+        ...b,
+        id: `m${i}_${Date.now()}`,
+        gpH: b.gpH || null,
+        rating: null,
+        color: COLORS[i % COLORS.length],
+        hullColor: COLORS[i % COLORS.length],
+        trimBands: [],
+        own: false,
+      }));
+      onFleetParsed(fleet);
+      setMsg(`✅ ${fleet.length} barco${fleet.length!==1?"s":""} extraído${fleet.length!==1?"s":""} sin IA (parser local · gratis). Clase y tipo: edítalos a mano si los necesitas. Pulsa "⚡ Cargar ratings de toda la flota" después para los ratings.`);
+      setBusy(false);
+      return;
+    }
+
+    // PASO 2: si el parser local no encontró barcos suficientes, recurrimos a IA
+    setMsg("🤖 Parser local no encontró barcos. Probando con IA...");
     try{
       const body = {
         model:IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001", max_tokens:3000,
