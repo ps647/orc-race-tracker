@@ -62,7 +62,16 @@ function getClient() {
   const { url, key } = readCfg();
   if (!url || !key) return null;
   _url = url; _key = key;
-  _sb = createClient(url, key, { realtime: { params: { eventsPerSecond: 5 } } });
+  _sb = createClient(url, key, {
+    realtime: { params: { eventsPerSecond: 5 } },
+    auth: {
+      // Persistir sesión en localStorage para que sobreviva al refresh
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true, // imprescindible para magic link
+      storageKey: "orc-auth-session",
+    },
+  });
   return _sb;
 }
 
@@ -286,6 +295,13 @@ async function upsertChampionship(sb, state) {
   let existingId = lsGet(chKey(state._champId))?._cloudId;
   let fixedCode = state.champ.joinCode ? state.champ.joinCode.toUpperCase() : null;
 
+  // Obtener user actual (si hay sesión auth)
+  let currentUserId = null;
+  try {
+    const { data: { user } } = await sb.auth.getUser();
+    currentUserId = user?.id || null;
+  } catch {}
+
   // 1) Si ya tenemos un código fijo, buscar por ese código.
   if (!existingId && fixedCode) {
     const { data: found } = await sb.from("championships").select("id,join_code").eq("join_code", fixedCode).maybeSingle();
@@ -321,6 +337,9 @@ async function upsertChampionship(sb, state) {
     await sb.from("championships").update({ ...row, join_code: finalCode }).eq("id", existingId);
     return { id: existingId, joinCode: finalCode };
   }
+  // INSERT NUEVO: si hay user autenticado, asociar created_by (trigger SQL lo
+  // convertirá automáticamente en admin del campeonato).
+  if (currentUserId) row.created_by = currentUserId;
   const { data, error } = await sb.from("championships").insert(row).select("id,join_code").single();
   if (error) throw error;
   return { id: data.id, joinCode: data.join_code };
@@ -585,4 +604,159 @@ export async function touchBoatInLibrary(sailNo) {
     .from("boats_library")
     .update({ last_seen_at: new Date().toISOString() })
     .eq("sail_no_norm", key);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH + MIEMBROS DEL CAMPEONATO (Fase 1)
+// ════════════════════════════════════════════════════════════════════════════
+// El sistema dual permite que coexistan:
+//   - Modo legacy: campeonatos con created_by=null, accesibles por joinCode
+//   - Modo auth: campeonatos con created_by=user.id, accesibles solo a miembros
+// ════════════════════════════════════════════════════════════════════════════
+
+// Enviar magic link al email. El usuario clica el link → entra en la app.
+export async function signInWithEmail(email) {
+  if (!isCloudEnabled()) throw new Error("Supabase no está configurado");
+  const sb = getClient();
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes("@")) throw new Error("Email no válido");
+  const { error } = await sb.auth.signInWithOtp({
+    email: cleanEmail,
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+    },
+  });
+  if (error) throw error;
+  return { ok: true };
+}
+
+export async function signOut() {
+  if (!isCloudEnabled()) return;
+  const sb = getClient();
+  try { await sb.auth.signOut(); } catch {}
+}
+
+// Devuelve el user actual o null
+export async function getCurrentUser() {
+  if (!isCloudEnabled()) return null;
+  const sb = getClient();
+  try {
+    const { data: { user } } = await sb.auth.getUser();
+    return user || null;
+  } catch { return null; }
+}
+
+// Subscribe a cambios de sesión (login/logout). Devuelve función unsubscribe.
+export function onAuthChange(callback) {
+  if (!isCloudEnabled()) return () => {};
+  const sb = getClient();
+  const { data } = sb.auth.onAuthStateChange((event, session) => {
+    callback(session?.user || null, event);
+  });
+  return () => { try { data.subscription.unsubscribe(); } catch {} };
+}
+
+// ─── Miembros del campeonato ───────────────────────────────────────────────
+
+export async function listMembers(championshipId) {
+  if (!isCloudEnabled() || !championshipId) return [];
+  const sb = getClient();
+  try {
+    const { data, error } = await sb
+      .from("championship_members")
+      .select("*")
+      .eq("championship_id", championshipId)
+      .order("invited_at", { ascending: true });
+    if (error) { console.warn("listMembers:", error.message); return []; }
+    return data || [];
+  } catch (e) {
+    console.warn("listMembers:", e.message);
+    return [];
+  }
+}
+
+export async function inviteMember(championshipId, email, role = "crew") {
+  if (!isCloudEnabled()) throw new Error("Supabase no configurado");
+  if (!championshipId) throw new Error("Falta championshipId");
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes("@")) throw new Error("Email no válido");
+  if (role !== "admin" && role !== "crew") role = "crew";
+
+  const sb = getClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) throw new Error("Debes iniciar sesión para invitar");
+
+  // Insertar la fila de miembro (la RLS verifica que tú eres admin)
+  const { error: insertError } = await sb.from("championship_members").insert({
+    championship_id: championshipId,
+    email: cleanEmail,
+    role,
+    invited_by: user.id,
+  });
+  if (insertError) {
+    // Si ya existe, no es error grave; lo informamos.
+    if (insertError.code === "23505" || /duplicate/i.test(insertError.message)) {
+      throw new Error("Este email ya está invitado a este campeonato");
+    }
+    throw insertError;
+  }
+
+  // Disparar email magic link para que el invitado pueda entrar
+  // (incluso si todavía no tiene cuenta, signInWithOtp con shouldCreateUser=true la crea)
+  try {
+    await sb.auth.signInWithOtp({
+      email: cleanEmail,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+      },
+    });
+  } catch (e) {
+    console.warn("No se pudo mandar email automático:", e.message);
+    // No es un error fatal — la invitación ya está guardada.
+    // El invitado puede entrar usando "Iniciar sesión" con su email.
+  }
+
+  return { ok: true, email: cleanEmail };
+}
+
+export async function removeMember(championshipId, email) {
+  if (!isCloudEnabled() || !championshipId || !email) throw new Error("Faltan datos");
+  const sb = getClient();
+  const { error } = await sb
+    .from("championship_members")
+    .delete()
+    .eq("championship_id", championshipId)
+    .eq("email", String(email).trim().toLowerCase());
+  if (error) throw error;
+  return { ok: true };
+}
+
+export async function updateMemberRole(championshipId, email, role) {
+  if (role !== "admin" && role !== "crew") throw new Error("Rol no válido");
+  if (!isCloudEnabled() || !championshipId || !email) throw new Error("Faltan datos");
+  const sb = getClient();
+  const { error } = await sb
+    .from("championship_members")
+    .update({ role })
+    .eq("championship_id", championshipId)
+    .eq("email", String(email).trim().toLowerCase());
+  if (error) throw error;
+  return { ok: true };
+}
+
+// Devuelve mi rol en un campeonato ("admin", "crew", o null si no soy miembro)
+export async function myRoleInChampionship(championshipId) {
+  if (!isCloudEnabled() || !championshipId) return null;
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const sb = getClient();
+  const { data } = await sb
+    .from("championship_members")
+    .select("role")
+    .eq("championship_id", championshipId)
+    .or(`user_id.eq.${user.id},email.eq.${user.email.toLowerCase()}`)
+    .maybeSingle();
+  return data?.role || null;
 }
