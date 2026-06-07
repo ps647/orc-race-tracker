@@ -821,7 +821,155 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
   const [busy, setBusy]   = useState(false);
   const [msg,  setMsg]    = useState("");
   const [ok,   setOk]     = useState(false);
-  const fileRef = useRef(null);
+  const fileRef     = useRef(null);  // PDF (vía API IA)
+  const htmlFileRef = useRef(null);  // HTML (parser local, sin IA)
+
+  // ─── PARSER LOCAL DE HTML DEL CERTIFICADO ORC (sin API) ───────────────────
+  // El HTML descargado desde Sailor Services tiene estructura tabular fija.
+  // Lo parseamos con DOMParser + regex y producimos el mismo JSON que el parser
+  // PDF basado en IA. Esto permite cargar ratings cuando la API está sin créditos.
+  const parseOrcHtml = (htmlText) => {
+    const doc = new DOMParser().parseFromString(htmlText, "text/html");
+
+    // 1) Cabecera: nombre + sailNo
+    //    <strong>SUMMER STORM</strong><span>USA 520</span>
+    let boatName = "", sailNo = "";
+    const strongName = doc.querySelector(".cert-type strong");
+    if (strongName) {
+      boatName = strongName.textContent.trim();
+      const span = strongName.nextElementSibling;
+      if (span && span.tagName === "SPAN") sailNo = span.textContent.trim().replace(/\s+/g, "-");
+    }
+
+    // 2) Class (boatType): <span fieldname="Class"><span>TP 52</span></span>
+    let boatType = "";
+    const clsEl = doc.querySelector('[fieldname="Class"]');
+    if (clsEl) boatType = clsEl.textContent.trim();
+
+    // 3) Single numbers (cabecera): APH ToD / APH ToT / CertNo / CDL
+    const labels = {};
+    doc.querySelectorAll(".small-label").forEach(lab => {
+      const key = lab.textContent.trim().replace(/:$/, "").trim();
+      // Buscar el span data hermano cercano
+      let next = lab.parentElement?.nextElementSibling;
+      if (next) {
+        const dataEl = next.querySelector?.(".data") || next;
+        labels[key] = dataEl.textContent.trim();
+      }
+    });
+
+    // 4) Fechas: Valid until <strong>28/02/2027</strong>
+    let validUntil = "", certRef = "";
+    const allText = doc.body.textContent;
+    const mValid = allText.match(/Valid until\s+(\d{2})\/(\d{2})\/(\d{4})/);
+    if (mValid) validUntil = `${mValid[3]}-${mValid[2]}-${mValid[1]}`;
+    const mRef = allText.match(/ORC Ref\s+([A-Z0-9]+)/);
+    if (mRef) certRef = mRef[1];
+
+    // 5) Tabla de Time Allowances + Selected Courses + Single Number estándar
+    //    Recorremos todas las filas <tr class="data"> y extraemos por etiqueta del <th>
+    const ta = { beat: null, r90: null, run: null };
+    const curves = { wl: null, ap: null, coastal: null };
+    const single = { wl_tod: null, wl_tot: null, ap_tod: null, ap_tot: null, cld_tod: null };
+
+    let inSingleNumberTable = false;
+    let inCoastalCurve = false;
+    doc.querySelectorAll("table.allowances").forEach(tbl => {
+      const id = tbl.id || "";
+      const caption = tbl.querySelector("caption")?.textContent?.trim() || "";
+      inSingleNumberTable = (id === "singlenumber");
+      inCoastalCurve = /Performance Curve/i.test(caption);
+
+      tbl.querySelectorAll("tr.data").forEach(tr => {
+        const th = tr.querySelector("th");
+        if (!th) return;
+        const label = th.textContent.trim();
+        const tds = Array.from(tr.querySelectorAll("td")).map(td => {
+          const n = parseFloat(td.textContent.trim().replace(",", "."));
+          return Number.isFinite(n) ? n : null;
+        });
+
+        // En la tabla Single Number Scoring Options solo hay 2 columnas (ToD, ToT)
+        if (inSingleNumberTable && tds.length >= 2) {
+          if (/Windward\s*\/\s*Leeward/i.test(label)) {
+            single.wl_tod = tds[0]; single.wl_tot = tds[1];
+          } else if (/All\s*purpose/i.test(label)) {
+            single.ap_tod = tds[0]; single.ap_tot = tds[1];
+          }
+          return;
+        }
+
+        // Curva Coastal/Long Distance (performance curve)
+        if (inCoastalCurve && /Coastal/i.test(label) && tds.length === 9) {
+          curves.coastal = tds; return;
+        }
+
+        // Time Allowances secs/NM: 9 columnas (4,6,8,10,12,14,16,20,24 kt)
+        if (tds.length === 9) {
+          if (/Beat\s*VMG/i.test(label))            ta.beat = tds;
+          else if (/^\s*90\s*°?\s*$/.test(label))   ta.r90 = tds;
+          else if (/Run\s*VMG/i.test(label))        ta.run = tds;
+          else if (/Windward\s*\/\s*Leeward/i.test(label)) curves.wl = tds;
+          else if (/All\s*purpose/i.test(label))    curves.ap = tds;
+        }
+      });
+    });
+
+    // 6) Coastal/LD ToD: si no salió de Single Number estándar (es de país),
+    //    buscamos en las secciones "Custom scoring options" Cyprus/etc o
+    //    en el ToD asociado a "Coastal/Long Distance" en cualquier tabla.
+    if (single.cld_tod == null) {
+      const mCld = allText.match(/Coastal\/Long Distance[\s\S]{0,200}?(\d{3,4}\.\d)/);
+      if (mCld) single.cld_tod = parseFloat(mCld[1]);
+    }
+
+    // Compatibilidad legacy: gpH = APH ToD
+    const gpH = single.ap_tod != null ? single.ap_tod : (labels["APH ToD"] ? parseFloat(labels["APH ToD"]) : null);
+    if (single.ap_tod == null && gpH != null) single.ap_tod = gpH;
+    if (single.ap_tot == null && labels["APH ToT"]) single.ap_tot = parseFloat(labels["APH ToT"]);
+
+    return {
+      boatName, sailNo, boatType,
+      certNo: labels["CertNo"] || null,
+      certRef: certRef || null,
+      validUntil: validUntil || null,
+      single, ta, curves, gpH,
+    };
+  };
+
+  const handleHtmlFile = async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const name = (file.name || "").toLowerCase();
+    if (!name.endsWith(".html") && !name.endsWith(".htm") && file.type !== "text/html") {
+      setMsg("❌ Selecciona un .html (descargado desde Sailor Services de ORC)");
+      e.target.value = ""; return;
+    }
+    setBusy(true); setOk(false);
+    setMsg("⏳ Leyendo certificado HTML (parser local, sin IA)...");
+    try {
+      const text = await file.text();
+      const rating = parseOrcHtml(text);
+      const s = rating.single || {};
+      if (s.wl_tot == null && s.wl_tod == null && s.ap_tod == null) {
+        setMsg("❌ No se encontraron los ratings en el HTML. ¿Es realmente el certificado de Sailor Services?");
+        setBusy(false); e.target.value = ""; return;
+      }
+      onRatingExtracted(rating);
+      setOk(true);
+      const parts = [];
+      if (s.wl_tot != null) parts.push(`W/L ToT ${s.wl_tot}`);
+      if (s.wl_tod != null) parts.push(`W/L ToD ${s.wl_tod}`);
+      if (s.ap_tod != null) parts.push(`AP ToD ${s.ap_tod}`);
+      const curvasOk = rating.ta?.beat?.length === 9;
+      const curvasNota = curvasOk ? " · curvas 4-24kt ✓" : " · sin curvas";
+      setMsg(`✅ ${rating.boatType||""} · ${parts.join(" · ")}${curvasNota} · válido hasta ${rating.validUntil||"—"} · (parser local)`);
+    } catch (err) {
+      setMsg("❌ Error al leer HTML: " + err.message);
+    }
+    setBusy(false);
+    e.target.value = "";
+  };
 
   const handleFile = async e=>{
     const file = e.target.files?.[0];
@@ -884,7 +1032,12 @@ Responde SOLO JSON, sin markdown:
 
       if(data.error){
         const m=data.error.message||"";
-        setMsg("❌ "+m.slice(0,100));
+        // Detectar el error específico de balance / créditos bajos
+        if (/credit balance|too low|billing/i.test(m)) {
+          setMsg("💳 Sin créditos en la API de IA. Alternativa SIN IA: descarga el certificado en HTML desde Sailor Services (botón 'PDF' → guarda como HTML) y súbelo con el botón verde de abajo. O mete GPH/ToT a mano en los campos.");
+        } else {
+          setMsg("❌ "+m.slice(0,100));
+        }
         setBusy(false); return;
       }
 
@@ -920,24 +1073,29 @@ Responde SOLO JSON, sin markdown:
 
   // Abre la web pública de búsqueda de certificados de ORC con el sailNo
   // pre-rellenado en el portapapeles, para pegar y buscar de un solo gesto.
+  // El sailNo se normaliza al formato ORC: PAIS-NUMERO (ej: ARG-5259, USA-520).
   const searchInOrc = async () => {
-    const sn = (sailNo||"").trim();
-    if(!sn){ setMsg("❌ Este barco no tiene nº de vela — añádelo primero arriba"); return; }
+    const raw = (sailNo||"").trim();
+    if(!raw){ setMsg("❌ Este barco no tiene nº de vela — añádelo primero arriba"); return; }
+    // Normalizar: separar letras del país y número con guion
+    // "ARG5259" → "ARG-5259", "USA 520" → "USA-520", "ESP-52801" → "ESP-52801"
+    let sn = raw.toUpperCase().replace(/\s+/g, "");
+    const m = sn.match(/^([A-Z]{2,4})-?(\d+)$/);
+    if (m) sn = `${m[1]}-${m[2]}`;
     try{
       await navigator.clipboard.writeText(sn);
-      setMsg(`📋 SailNo "${sn}" copiado al portapapeles. En la web de ORC pégalo en el buscador, descarga el PDF y vuelve aquí para subirlo.`);
+      setMsg(`📋 SailNo "${sn}" copiado. En la web de ORC pégalo en "Sail Number" (Ctrl+V), busca, descarga el HTML del certificado y súbelo con el botón verde de abajo.`);
     }catch{
-      setMsg(`📋 SailNo "${sn}" — pégalo en el buscador de ORC (Ctrl+V). Web abierta en pestaña aparte.`);
+      setMsg(`📋 SailNo "${sn}" — pégalo en el campo "Sail Number" de la web abierta.`);
     }
-    // Página de búsqueda pública (Sailor Services). Le pasamos SailNo por query
-    // por si en algún momento pre-rellena; sino el sailNo está en el portapapeles.
     const url = `https://data.orc.org/public/WPub.dll?action=SrchCert&xslp=scert.php&SailNo=${encodeURIComponent(sn)}`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
   return(
     <div>
-      <input ref={fileRef} type="file" accept="application/pdf" style={{display:"none"}} onChange={handleFile}/>
+      <input ref={fileRef}     type="file" accept="application/pdf" style={{display:"none"}} onChange={handleFile}/>
+      <input ref={htmlFileRef} type="file" accept=".html,.htm,text/html" style={{display:"none"}} onChange={handleHtmlFile}/>
       {/* Botón: ir a buscar el cert en la web de ORC con el sailNo en portapapeles */}
       <button onClick={searchInOrc} disabled={busy}
         style={{width:"100%",padding:"7px 0",borderRadius:7,marginBottom:6,
@@ -946,12 +1104,19 @@ Responde SOLO JSON, sin markdown:
         🔍 Buscar cert. en ORC{sailNo?` · ${sailNo}`:""}
       </button>
       <button onClick={()=>fileRef.current?.click()} disabled={busy}
-        style={{width:"100%",padding:"9px 0",borderRadius:7,
+        style={{width:"100%",padding:"9px 0",borderRadius:7,marginBottom:5,
           background:ok?`${GRN}22`:busy?CARD2:CYN,
           color:ok?GRN:busy?T3:"#fff",
           border:`1px solid ${ok?GRN:busy?BDR:CYN}`,
           fontSize:11,fontWeight:700,cursor:busy?"default":"pointer"}}>
-        {busy?"⏳ Leyendo certificado...":ok?"✅ Certificado aplicado":"📄 Subir certificado ORC (PDF)"}
+        {busy?"⏳ Leyendo certificado...":ok?"✅ Certificado aplicado":"📄 Subir certificado ORC (PDF · usa IA)"}
+      </button>
+      {/* Botón alternativo: parser local de HTML sin IA (gratis, no necesita API) */}
+      <button onClick={()=>htmlFileRef.current?.click()} disabled={busy}
+        style={{width:"100%",padding:"7px 0",borderRadius:7,
+          background:`${GRN}18`, color:GRN, border:`1px solid ${GRN}55`,
+          fontSize:10,fontWeight:700,cursor:busy?"default":"pointer"}}>
+        📄 Subir certificado HTML (sin IA · gratis)
       </button>
       {msg&&(
         <div style={{marginTop:5,fontSize:9,padding:"5px 8px",borderRadius:6,lineHeight:1.5,
