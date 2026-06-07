@@ -5494,8 +5494,9 @@ function LoginScreen({ onClose, defaultEmail = "" }) {
 // ║  Modal accesible desde la cabecera del campeonato (botón "👥 Equipo").  ║
 // ║  Solo admin puede invitar/eliminar; crew solo ve la lista.              ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-function TeamManager({ championshipId, championshipName, currentUserEmail, myRole, onClose }) {
+function TeamManager({ championshipId, championshipName, currentUserEmail, myRole, onMigrated, onClose }) {
   const [members, setMembers] = useState(null);
+  const [meta, setMeta]       = useState(null);       // {id,name,created_by,join_code}
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -5503,10 +5504,15 @@ function TeamManager({ championshipId, championshipName, currentUserEmail, myRol
   const [newRole, setNewRole] = useState("crew");
   const [confirmDel, setConfirmDel] = useState(null);
   const isAdmin = myRole === "admin";
+  const isLegacy = !!meta && !meta.created_by;       // sin owner = legacy joinCode
+  const noCloud = !championshipId;                    // no sincronizado
 
   const load = async () => {
     setErr("");
+    if (noCloud) { setMembers([]); setMeta(null); return; }
     try {
+      const m = await cloud.getChampionshipMeta(championshipId);
+      setMeta(m);
       const list = await cloud.listMembers(championshipId);
       setMembers(list);
     } catch (e) {
@@ -5515,6 +5521,21 @@ function TeamManager({ championshipId, championshipName, currentUserEmail, myRol
     }
   };
   useEffect(() => { load(); }, [championshipId]);
+
+  const handleClaim = async () => {
+    setMsg("");
+    setBusy(true);
+    try {
+      await cloud.claimLegacyChampionship(championshipId);
+      setMsg(`✅ Campeonato convertido en compartido. Eres admin. Ya puedes invitar miembros.`);
+      await load();
+      if (typeof onMigrated === "function") onMigrated();
+    } catch (e) {
+      setMsg("❌ " + e.message);
+    }
+    setBusy(false);
+    setTimeout(() => setMsg(""), 6000);
+  };
 
   const handleInvite = async () => {
     setMsg("");
@@ -5572,88 +5593,118 @@ function TeamManager({ championshipId, championshipName, currentUserEmail, myRol
         {err && <div style={{padding:"8px 10px",background:`${RED}15`,border:`1px solid ${RED}44`,borderRadius:7,fontSize:10,color:RED,marginBottom:10}}>{err}</div>}
         {msg && <div style={{padding:"8px 10px",background:msg.startsWith("✅")?`${GRN}15`:`${RED}15`,border:`1px solid ${msg.startsWith("✅")?GRN:RED}44`,borderRadius:7,fontSize:10,color:msg.startsWith("✅")?GRN:RED,marginBottom:10,lineHeight:1.4}}>{msg}</div>}
 
-        {/* Formulario invitar (solo admin) */}
-        {isAdmin && (
-          <div style={{padding:"10px 12px",background:CARD,borderRadius:8,border:`1px solid ${ACC}44`,marginBottom:12}}>
-            <div style={{fontSize:11,fontWeight:700,color:ACC,marginBottom:8}}>+ Invitar nuevo miembro</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 95px",gap:6,marginBottom:6}}>
-              <input type="email" value={newEmail} onChange={e=>setNewEmail(e.target.value)}
-                onKeyDown={e=>{ if(e.key==="Enter"&&!busy) handleInvite(); }}
-                placeholder="email@del.tripulante"
-                style={{padding:"8px 10px",fontSize:11,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:6,boxSizing:"border-box"}}/>
-              <select value={newRole} onChange={e=>setNewRole(e.target.value)}
-                style={{padding:"8px 10px",fontSize:11,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:6,boxSizing:"border-box"}}>
-                <option value="crew">Tripulante</option>
-                <option value="admin">Admin</option>
-              </select>
+        {/* Caso 1: Campeonato no sincronizado (sin cloudId) */}
+        {noCloud && (
+          <div style={{padding:"14px 14px",background:`${GLD}10`,border:`1px solid ${GLD}55`,borderRadius:8,marginBottom:14}}>
+            <div style={{fontSize:13,fontWeight:700,color:GLD,marginBottom:6}}>⚠️ Campeonato no sincronizado</div>
+            <div style={{fontSize:11,color:T2,lineHeight:1.5}}>
+              Este campeonato aún no está guardado en la nube. Edita cualquier dato (ej. cambia un color de barco) para que se sincronice automáticamente, y vuelve a abrir Equipo.
             </div>
-            <button onClick={handleInvite} disabled={busy||!newEmail.includes("@")}
-              style={{width:"100%",padding:"8px",background:busy?CARD2:ACC,color:busy?T3:"#fff",border:"none",borderRadius:6,fontSize:11,fontWeight:700,cursor:busy?"default":"pointer"}}>
-              {busy ? "⏳ Invitando..." : "✉️ Invitar y enviar enlace mágico"}
+          </div>
+        )}
+
+        {/* Caso 2: Campeonato LEGACY (created_by NULL) - ofrecer migración */}
+        {!noCloud && isLegacy && (
+          <div style={{padding:"14px 14px",background:`${ACC}10`,border:`1px solid ${ACC}55`,borderRadius:8,marginBottom:14}}>
+            <div style={{fontSize:13,fontWeight:700,color:ACC,marginBottom:6}}>🔓 Campeonato legacy</div>
+            <div style={{fontSize:11,color:T2,lineHeight:1.5,marginBottom:10}}>
+              Este campeonato fue creado antes del sistema de equipo. Actualmente cualquiera con el código <strong style={{color:T1,fontFamily:"monospace"}}>{meta?.join_code}</strong> puede entrar.
+              <br/><br/>
+              <strong style={{color:T1}}>¿Quieres convertirlo en compartido?</strong> Te harás admin y podrás invitar miembros por email. Los barcos, fotos y datos se conservan intactos.
+              <br/><br/>
+              <span style={{color:T3,fontSize:10}}>⚠️ Tras convertir, solo los miembros invitados verán este campeonato. Los que entraban por código dejarán de tener acceso.</span>
+            </div>
+            <button onClick={handleClaim} disabled={busy}
+              style={{width:"100%",padding:"10px",background:busy?CARD2:ACC,color:busy?T3:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:700,cursor:busy?"default":"pointer"}}>
+              {busy ? "⏳ Convirtiendo..." : "🔓 Convertir en compartido y hacerme admin"}
             </button>
-            <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.4}}>
-              El invitado recibirá un email con un enlace. Al pulsarlo entrará automáticamente al campeonato.
+          </div>
+        )}
+
+        {/* Caso 3: Campeonato AUTH normal - mostrar miembros e invitación */}
+        {!noCloud && !isLegacy && (
+        <>
+          {/* Formulario invitar (solo admin) */}
+          {isAdmin && (
+            <div style={{padding:"10px 12px",background:CARD,borderRadius:8,border:`1px solid ${ACC}44`,marginBottom:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:ACC,marginBottom:8}}>+ Invitar nuevo miembro</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 95px",gap:6,marginBottom:6}}>
+                <input type="email" value={newEmail} onChange={e=>setNewEmail(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==="Enter"&&!busy) handleInvite(); }}
+                  placeholder="email@del.tripulante"
+                  style={{padding:"8px 10px",fontSize:11,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:6,boxSizing:"border-box"}}/>
+                <select value={newRole} onChange={e=>setNewRole(e.target.value)}
+                  style={{padding:"8px 10px",fontSize:11,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:6,boxSizing:"border-box"}}>
+                  <option value="crew">Tripulante</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <button onClick={handleInvite} disabled={busy||!newEmail.includes("@")}
+                style={{width:"100%",padding:"8px",background:busy?CARD2:ACC,color:busy?T3:"#fff",border:"none",borderRadius:6,fontSize:11,fontWeight:700,cursor:busy?"default":"pointer"}}>
+                {busy ? "⏳ Invitando..." : "✉️ Invitar y enviar enlace mágico"}
+              </button>
+              <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.4}}>
+                El invitado recibirá un email con un enlace. Al pulsarlo entrará automáticamente al campeonato.
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {!isAdmin && (
-          <div style={{padding:"8px 10px",background:`${T3}10`,border:`1px solid ${BDR}`,borderRadius:7,fontSize:10,color:T2,marginBottom:10,lineHeight:1.5}}>
-            ℹ️ Eres <strong style={{color:T1}}>tripulante</strong>. Solo el admin del campeonato puede invitar o eliminar miembros.
-          </div>
-        )}
+          {!isAdmin && (
+            <div style={{padding:"8px 10px",background:`${T3}10`,border:`1px solid ${BDR}`,borderRadius:7,fontSize:10,color:T2,marginBottom:10,lineHeight:1.5}}>
+              ℹ️ Eres <strong style={{color:T1}}>tripulante</strong>. Solo el admin del campeonato puede invitar o eliminar miembros.
+            </div>
+          )}
 
-        {/* Lista de miembros */}
-        <div style={{fontSize:10,color:T2,marginBottom:6,fontWeight:700}}>
-          MIEMBROS {members ? `(${members.length})` : ""}
-        </div>
-        {members === null ? (
-          <div style={{textAlign:"center",padding:20,color:T2,fontSize:11}}>⏳ Cargando...</div>
-        ) : members.length === 0 ? (
-          <div style={{textAlign:"center",padding:"20px",color:T2,fontSize:11,fontStyle:"italic"}}>
-            Sin miembros todavía
+          {/* Lista de miembros */}
+          <div style={{fontSize:10,color:T2,marginBottom:6,fontWeight:700}}>
+            MIEMBROS {members ? `(${members.length})` : ""}
           </div>
-        ) : (
-          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"50vh",overflowY:"auto"}}>
-            {members.map(m => {
-              const isMe = m.email.toLowerCase() === (currentUserEmail||"").toLowerCase();
-              const pending = !m.joined_at;
-              return (
-                <div key={m.email} style={{padding:"10px 11px",background:CARD,borderRadius:7,border:`1px solid ${isMe?GRN+"66":BDR}`}}>
-                  {/* Línea 1: email + badges */}
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
-                    <span style={{fontSize:11,fontWeight:700,color:T1,wordBreak:"break-word",overflowWrap:"anywhere",minWidth:0,flex:"1 1 auto"}}>{m.email}</span>
-                    {isMe && <span style={{fontSize:8,color:GRN,background:`${GRN}20`,padding:"1px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>TÚ</span>}
-                    {pending && <span style={{fontSize:8,color:GLD,background:`${GLD}20`,padding:"1px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>PENDIENTE</span>}
+          {members === null ? (
+            <div style={{textAlign:"center",padding:20,color:T2,fontSize:11}}>⏳ Cargando...</div>
+          ) : members.length === 0 ? (
+            <div style={{textAlign:"center",padding:"20px",color:T2,fontSize:11,fontStyle:"italic"}}>
+              Sin miembros todavía
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"50vh",overflowY:"auto"}}>
+              {members.map(m => {
+                const isMe = m.email.toLowerCase() === (currentUserEmail||"").toLowerCase();
+                const pending = !m.joined_at;
+                return (
+                  <div key={m.email} style={{padding:"10px 11px",background:CARD,borderRadius:7,border:`1px solid ${isMe?GRN+"66":BDR}`}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
+                      <span style={{fontSize:11,fontWeight:700,color:T1,wordBreak:"break-word",overflowWrap:"anywhere",minWidth:0,flex:"1 1 auto"}}>{m.email}</span>
+                      {isMe && <span style={{fontSize:8,color:GRN,background:`${GRN}20`,padding:"1px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>TÚ</span>}
+                      {pending && <span style={{fontSize:8,color:GLD,background:`${GLD}20`,padding:"1px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>PENDIENTE</span>}
+                    </div>
+                    <div style={{fontSize:9,color:T3,marginBottom:6}}>
+                      {pending ? "Sin entrar todavía" : `Activo desde ${new Date(m.joined_at).toLocaleDateString("es-ES")}`}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      {isAdmin && !isMe ? (
+                        <select value={m.role} onChange={e=>handleRoleChange(m.email, e.target.value)}
+                          style={{flex:1,padding:"5px 8px",fontSize:10,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:5}}>
+                          <option value="crew">Tripulante</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      ) : (
+                        <span style={{flex:1,fontSize:9,color:m.role==="admin"?GLD:CYN,background:`${m.role==="admin"?GLD:CYN}15`,padding:"4px 10px",borderRadius:4,fontWeight:700,textTransform:"uppercase",textAlign:"center"}}>
+                          {m.role==="admin"?"👑 Admin":"⛵ Tripulante"}
+                        </span>
+                      )}
+                      {isAdmin && !isMe && (
+                        <button onClick={()=>setConfirmDel(m)} disabled={busy}
+                          style={{background:`${RED}15`,color:RED,border:`1px solid ${RED}44`,borderRadius:5,padding:"5px 10px",fontSize:9,cursor:"pointer",fontWeight:700,flexShrink:0}}>
+                          🗑 Baja
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  {/* Línea 2: estado */}
-                  <div style={{fontSize:9,color:T3,marginBottom:6}}>
-                    {pending ? "Sin entrar todavía" : `Activo desde ${new Date(m.joined_at).toLocaleDateString("es-ES")}`}
-                  </div>
-                  {/* Línea 3: rol + acciones */}
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    {isAdmin && !isMe ? (
-                      <select value={m.role} onChange={e=>handleRoleChange(m.email, e.target.value)}
-                        style={{flex:1,padding:"5px 8px",fontSize:10,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:5}}>
-                        <option value="crew">Tripulante</option>
-                        <option value="admin">Admin</option>
-                      </select>
-                    ) : (
-                      <span style={{flex:1,fontSize:9,color:m.role==="admin"?GLD:CYN,background:`${m.role==="admin"?GLD:CYN}15`,padding:"4px 10px",borderRadius:4,fontWeight:700,textTransform:"uppercase",textAlign:"center"}}>
-                        {m.role==="admin"?"👑 Admin":"⛵ Tripulante"}
-                      </span>
-                    )}
-                    {isAdmin && !isMe && (
-                      <button onClick={()=>setConfirmDel(m)} disabled={busy}
-                        style={{background:`${RED}15`,color:RED,border:`1px solid ${RED}44`,borderRadius:5,padding:"5px 10px",fontSize:9,cursor:"pointer",fontWeight:700,flexShrink:0}}>
-                        🗑 Baja
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
+        </>
         )}
 
         {/* Confirmación borrar */}
@@ -6451,12 +6502,21 @@ export default function App(){
       {showLogin && <LoginScreen onClose={()=>setShowLogin(false)}/>}
 
       {/* Gestor de equipo del campeonato actual (Fase 1) */}
-      {showTeam && state?._cloudId && (
+      {showTeam && (
         <TeamManager
-          championshipId={state._cloudId}
-          championshipName={state.champ?.name || "Campeonato"}
+          championshipId={state?._cloudId || null}
+          championshipName={state?.champ?.name || "Campeonato"}
           currentUserEmail={authUser?.email}
           myRole={myRole}
+          onMigrated={() => {
+            // Tras convertir un legacy en auth, recargar el role
+            (async () => {
+              if (state?._cloudId) {
+                const role = await cloud.myRoleInChampionship(state._cloudId);
+                setMyRole(role);
+              }
+            })();
+          }}
           onClose={()=>setShowTeam(false)}
         />
       )}
@@ -6537,8 +6597,9 @@ export default function App(){
               <span style={{fontSize:9,color:ACC,fontWeight:700}}>Login</span>
             </button>
           )}
-          {/* Botón Equipo (solo si autenticado y hay campeonato activo) */}
-          {authUser && state?._cloudId && (
+          {/* Botón Equipo: aparece si autenticado, incluso para campeonatos legacy
+              (dentro del modal se ofrece convertir el legacy a compartido) */}
+          {authUser && (
             <button onClick={()=>setShowTeam(true)} style={{
               display:"flex",alignItems:"center",gap:4,padding:"4px 9px",
               background:`${CYN}22`,border:`1px solid ${CYN}55`,borderRadius:18,cursor:"pointer",flexShrink:0
