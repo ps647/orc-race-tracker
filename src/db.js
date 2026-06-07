@@ -760,3 +760,52 @@ export async function myRoleInChampionship(championshipId) {
     .maybeSingle();
   return data?.role || null;
 }
+
+// ─── Convertir un campeonato legacy en auth-protected ─────────────────────
+// Asigna created_by = user.id al campeonato. El trigger SQL
+// auto_add_creator_as_admin hace el resto: añade al usuario como admin.
+// Si el campeonato ya tenía created_by, no hace nada (no se sobrescribe).
+export async function claimLegacyChampionship(championshipId) {
+  if (!isCloudEnabled()) throw new Error("Supabase no configurado");
+  if (!championshipId) throw new Error("Falta championshipId");
+  const sb = getClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) throw new Error("Debes iniciar sesión");
+
+  // Comprobar estado actual
+  const { data: champ, error: selErr } = await sb
+    .from("championships")
+    .select("id, name, created_by")
+    .eq("id", championshipId)
+    .maybeSingle();
+  if (selErr) throw selErr;
+  if (!champ) throw new Error("Campeonato no encontrado");
+  if (champ.created_by && champ.created_by !== user.id) {
+    throw new Error("Este campeonato ya tiene admin. No puedes reclamarlo.");
+  }
+  if (champ.created_by === user.id) {
+    return { ok: true, alreadyOwned: true };
+  }
+
+  // Asignar created_by (solo si está vacío). El trigger te hace admin.
+  const { error: updErr } = await sb
+    .from("championships")
+    .update({ created_by: user.id })
+    .eq("id", championshipId)
+    .is("created_by", null);
+  if (updErr) throw updErr;
+
+  return { ok: true, claimed: true };
+}
+
+// Devuelve {created_by, name} del campeonato (para saber si es legacy)
+export async function getChampionshipMeta(championshipId) {
+  if (!isCloudEnabled() || !championshipId) return null;
+  const sb = getClient();
+  const { data } = await sb
+    .from("championships")
+    .select("id, name, created_by, join_code")
+    .eq("id", championshipId)
+    .maybeSingle();
+  return data || null;
+}
