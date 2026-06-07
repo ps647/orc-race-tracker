@@ -5423,6 +5423,8 @@ function LoginScreen({ onClose, defaultEmail = "" }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [sent, setSent] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
 
   const handleSend = async () => {
     setMsg("");
@@ -5434,20 +5436,35 @@ function LoginScreen({ onClose, defaultEmail = "" }) {
     try {
       await cloud.signInWithEmail(email.trim());
       setSent(true);
-      setMsg(`✅ Revisa tu email (${email.trim()}). Haz clic en el enlace para entrar. Puedes cerrar esta ventana.`);
+      setMsg(`✅ Revisa tu email (${email.trim()}). Copia el código de 6 dígitos del email O pulsa el enlace mágico — lo que te sea más fácil.`);
     } catch (e) {
       setMsg("❌ " + e.message);
     }
     setBusy(false);
   };
 
+  const handleVerify = async () => {
+    setMsg("");
+    if (!otpCode.trim()) { setMsg("❌ Introduce el código del email"); return; }
+    setVerifying(true);
+    try {
+      await cloud.verifyOtpCode(email.trim(), otpCode);
+      setMsg("✅ ¡Sesión iniciada! Cargando...");
+      // El listener onAuthChange en App detectará el SIGNED_IN y cerrará el modal
+      setTimeout(() => onClose(), 500);
+    } catch (e) {
+      setMsg("❌ Código incorrecto o expirado. Pide uno nuevo si hace falta.");
+    }
+    setVerifying(false);
+  };
+
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
-      <div style={{background:BG,maxWidth:380,width:"100%",borderRadius:10,padding:"18px 16px",border:`1px solid ${BDR}`}}>
+      <div style={{background:BG,maxWidth:400,width:"100%",borderRadius:10,padding:"18px 16px",border:`1px solid ${BDR}`,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <div>
             <div style={{fontSize:15,fontWeight:700,color:T1}}>🔐 Iniciar sesión</div>
-            <div style={{fontSize:10,color:T2,marginTop:2}}>Magic link sin contraseña</div>
+            <div style={{fontSize:10,color:T2,marginTop:2}}>Sin contraseña — código o enlace por email</div>
           </div>
           <button onClick={onClose} style={{background:"none",color:T2,fontSize:18,border:"none",cursor:"pointer",padding:"4px 10px"}}>✕</button>
         </div>
@@ -5455,17 +5472,53 @@ function LoginScreen({ onClose, defaultEmail = "" }) {
         {!sent && (
           <>
             <div style={{fontSize:11,color:T2,lineHeight:1.5,marginBottom:12}}>
-              Introduce tu email. Te enviaremos un enlace mágico para entrar sin contraseña.
+              Introduce tu email. Te enviaremos un <strong style={{color:T1}}>código de 6 dígitos</strong> y un enlace mágico.
               <br/><br/>
               Si tu admin te ha invitado a un campeonato, usa el <strong style={{color:T1}}>mismo email</strong> que él/ella ha registrado.
             </div>
             <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
               onKeyDown={e=>{ if(e.key==="Enter"&&!busy) handleSend(); }}
-              placeholder="tu@email.com" autoFocus
+              placeholder="tu@email.com" autoFocus inputMode="email" autoComplete="email"
               style={{width:"100%",padding:"10px 12px",fontSize:13,background:CARD,color:T1,border:`1px solid ${BDR}`,borderRadius:7,boxSizing:"border-box",marginBottom:10}}/>
             <button onClick={handleSend} disabled={busy||!email.trim()}
               style={{width:"100%",padding:"11px",background:busy?CARD2:ACC,color:busy?T3:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:700,cursor:busy?"default":"pointer",marginBottom:8}}>
-              {busy ? "⏳ Enviando..." : "✉️ Enviar enlace mágico"}
+              {busy ? "⏳ Enviando..." : "✉️ Enviar código y enlace"}
+            </button>
+          </>
+        )}
+
+        {sent && (
+          <>
+            {/* Input de código OTP (recomendado en móviles) */}
+            <div style={{padding:"12px",background:`${GRN}10`,border:`2px solid ${GRN}55`,borderRadius:8,marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:GRN,marginBottom:8}}>📱 OPCIÓN 1 (recomendado en móvil)</div>
+              <div style={{fontSize:10,color:T2,marginBottom:8,lineHeight:1.5}}>
+                Copia el <strong style={{color:T1}}>código de 6 dígitos</strong> del email y pégalo aquí:
+              </div>
+              <input type="text" value={otpCode} onChange={e=>setOtpCode(e.target.value.replace(/\D/g,"").slice(0,6))}
+                onKeyDown={e=>{ if(e.key==="Enter"&&!verifying) handleVerify(); }}
+                placeholder="123456" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+                style={{width:"100%",padding:"12px",fontSize:18,background:CARD,color:T1,border:`1px solid ${BDR}`,borderRadius:7,boxSizing:"border-box",marginBottom:8,textAlign:"center",letterSpacing:"6px",fontWeight:700,fontFamily:"monospace"}}/>
+              <button onClick={handleVerify} disabled={verifying||otpCode.length<6}
+                style={{width:"100%",padding:"10px",background:verifying?CARD2:GRN,color:verifying?T3:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:700,cursor:verifying?"default":"pointer"}}>
+                {verifying ? "⏳ Verificando..." : "✅ Entrar con el código"}
+              </button>
+            </div>
+
+            <div style={{fontSize:10,color:T3,textAlign:"center",margin:"10px 0",lineHeight:1.5}}>
+              — o —
+            </div>
+
+            <div style={{padding:"10px",background:`${ACC}10`,border:`1px solid ${ACC}55`,borderRadius:8,marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:ACC,marginBottom:6}}>🔗 OPCIÓN 2 (sólo en ordenador)</div>
+              <div style={{fontSize:10,color:T2,lineHeight:1.5}}>
+                Pulsa el enlace "Sign in" del email. En móvil <strong style={{color:GLD}}>puede abrir un navegador equivocado</strong> y no funcionar — mejor usar el código de arriba.
+              </div>
+            </div>
+
+            <button onClick={()=>{ setSent(false); setOtpCode(""); setMsg(""); }}
+              style={{width:"100%",padding:"8px",background:"none",color:T2,border:`1px solid ${BDR}`,borderRadius:7,fontSize:10,cursor:"pointer",marginBottom:8}}>
+              ⏪ Enviar otro código (a otro email o reintentar)
             </button>
           </>
         )}
@@ -5482,7 +5535,7 @@ function LoginScreen({ onClose, defaultEmail = "" }) {
 
         <div style={{fontSize:9,color:T3,marginTop:12,lineHeight:1.5,textAlign:"center"}}>
           ¿No tienes cuenta? Se creará automáticamente.<br/>
-          ¿Puedes seguir sin iniciar sesión? Sí — los campeonatos legacy (por código) seguirán funcionando.
+          ¿Puedes seguir sin iniciar sesión? Sí — los campeonatos legacy seguirán funcionando.
         </div>
       </div>
     </div>
