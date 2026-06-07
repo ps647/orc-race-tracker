@@ -840,14 +840,12 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
         r.readAsDataURL(file);
       });
 
-      const res = await fetch(CLAUDE_API,{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          model: IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001",
-          max_tokens: 1200,
-          messages:[{role:"user", content:[
-            {type:"document", source:{type:"base64", media_type:"application/pdf", data:b64}},
-            {type:"text", text:`Este es un certificado ORC 2026. Extrae los valores EXACTOS de las tablas. Las columnas de viento son siempre los 9 puntos estándar ORC: 4, 6, 8, 10, 12, 14, 16, 20, 24 kt.
+      const body = {
+        model: IS_ARTIFACT?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001",
+        max_tokens: 1200,
+        messages:[{role:"user", content:[
+          {type:"document", source:{type:"base64", media_type:"application/pdf", data:b64}},
+          {type:"text", text:`Este es un certificado ORC 2026. Extrae los valores EXACTOS de las tablas. Las columnas de viento son siempre los 9 puntos estándar ORC: 4, 6, 8, 10, 12, 14, 16, 20, 24 kt.
 
 1. Datos del barco: boatName, sailNo, boatType (Class), certNo, validUntil (formato YYYY-MM-DD).
 2. Tabla "Single Number Scoring Options": para Windward/Leeward y All purpose toma Time On Distance y Time On Time. De "Coastal/Long Distance" toma su Time On Distance.
@@ -862,15 +860,31 @@ Responde SOLO JSON, sin markdown:
 "single":{"wl_tod":477.7,"wl_tot":1.2560,"ap_tod":381.5,"ap_tot":1.5729,"cld_tod":416.4},
 "ta":{"beat":[890.4,686.6,574.5,533.0,510.6,496.7,486.7,475.9,470.2],"r90":[520.1,417.9,371.4,336.2,310.8,293.8,280.4,259.9,245.0],"run":[1048.6,703.9,549.5,470.8,420.9,375.5,332.2,263.4,237.8]},
 "curves":{"wl":[890.4,695.2,562.0,501.9,465.7,436.1,409.5,369.6,355.2],"ap":[680.5,533.1,443.3,400.7,373.2,350.7,330.9,302.6,290.1],"coastal":[895.3,696.1,530.0,451.7,400.3,365.6,334.9,287.3,265.8]}}`}
-          ]}]
-        })
-      });
+        ]}]
+      };
 
-      const data = await res.json();
+      // Reintento automático con espera si la API responde "rate limit"
+      let data = null;
+      for(let attempt=1; attempt<=3; attempt++){
+        if(attempt>1) setMsg(`⏱ Rate limit · reintentando (intento ${attempt}/3) en 20s...`);
+        const res = await fetch(CLAUDE_API,{
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify(body)
+        });
+        data = await res.json();
+        const errMsg = data.error?.message || "";
+        const isRateLimit = /rate.?limit|too many|429/i.test(errMsg);
+        if(!isRateLimit) break;
+        if(attempt === 3){
+          setMsg("⏱ Rate limit persistente. Espera 1-2 minutos y vuelve a intentarlo. Si tienes prisa, mete los datos clave a mano: GPH (AP ToD) y ToT (AP ToT) en los campos manuales de abajo.");
+          setBusy(false); e.target.value=""; return;
+        }
+        await new Promise(r => setTimeout(r, 20000));
+      }
+
       if(data.error){
         const m=data.error.message||"";
-        if(m.includes("rate limit")) setMsg("⏱ Rate limit — espera 1 minuto e inténtalo de nuevo");
-        else setMsg("❌ "+m.slice(0,100));
+        setMsg("❌ "+m.slice(0,100));
         setBusy(false); return;
       }
 
