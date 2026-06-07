@@ -971,6 +971,110 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
     e.target.value = "";
   };
 
+  // ─── DESCARGA DIRECTA DESDE API PÚBLICA DE ORC ─────────────────────────────
+  // Llama al endpoint serverless propio (/api/orc-cert) que hace de proxy hacia
+  // data.orc.org/public/WPub.dll para evitar CORS. No requiere login ni IA.
+  // Esta es la opción más rápida cuando funciona.
+  const fetchFromOrcApi = async () => {
+    const raw = (sailNo||"").trim();
+    if(!raw){ setMsg("❌ Este barco no tiene nº de vela — añádelo primero arriba"); return; }
+    let sn = raw.toUpperCase().replace(/\s+/g, "");
+    const m = sn.match(/^([A-Z]{2,4})-?(\d+)$/);
+    if (m) sn = `${m[1]}-${m[2]}`;
+
+    setBusy(true); setOk(false);
+    setMsg(`⚡ Descargando rating de ORC para ${sn}...`);
+    try{
+      const url = `/api/orc-cert?sailNo=${encodeURIComponent(sn)}&ext=json`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if(!res.ok){
+        setMsg(`❌ ORC API: ${data.error||res.statusText}. Prueba el botón verde "Subir HTML".`);
+        setBusy(false); return;
+      }
+      // El formato JSON de ORC tiene muchos campos. Aceptamos varias variantes.
+      // Loggeamos en consola la primera vez para poder debuggear el formato real.
+      console.log("📦 ORC API response para", sn, ":", data);
+      if(data.raw){
+        setMsg(`❌ ORC devolvió formato no-JSON (RMS). Mira la consola del navegador (F12) y pásame el output a Claude para ajustar el parser.`);
+        setBusy(false); return;
+      }
+      const rating = parseOrcJson(data);
+      const s = rating.single || {};
+      if(s.wl_tot==null && s.wl_tod==null && s.ap_tod==null){
+        setMsg(`⚠️ No encontré los single numbers en el JSON. Pásame el output de consola (F12) para ajustar el parser. De momento usa el botón verde "Subir HTML".`);
+        setBusy(false); return;
+      }
+      onRatingExtracted(rating);
+      setOk(true);
+      const parts=[];
+      if(s.wl_tot!=null) parts.push(`W/L ToT ${s.wl_tot}`);
+      if(s.wl_tod!=null) parts.push(`W/L ToD ${s.wl_tod}`);
+      if(s.ap_tod!=null) parts.push(`AP ToD ${s.ap_tod}`);
+      const curvasOk = rating.ta?.beat?.length === 9;
+      const curvasNota = curvasOk ? " · curvas 4-24kt ✓" : " · sin curvas";
+      setMsg(`✅ Descargado de ORC · ${rating.boatType||""} · ${parts.join(" · ")}${curvasNota} · (API directa)`);
+    }catch(e){
+      setMsg(`❌ Error: ${e.message}. Prueba el botón verde "Subir HTML" si la API directa falla.`);
+    }
+    setBusy(false);
+  };
+
+  // Parser del JSON que devuelve la API pública de ORC.
+  // El formato exacto puede variar; intentamos varios nombres de campos comunes
+  // basándonos en el formato RMS de ORC. Si no encuentra algo, lo deja a null.
+  const parseOrcJson = (data) => {
+    // Helper para buscar un valor por varios alias de nombre
+    const pick = (obj, ...keys) => {
+      for (const k of keys) {
+        if (obj?.[k] != null) return obj[k];
+      }
+      return null;
+    };
+    // Helper para extraer array numérico de 9 valores
+    const arr9 = (v) => {
+      if (!v) return null;
+      if (Array.isArray(v) && v.length >= 9) return v.slice(0, 9).map(x => parseFloat(x));
+      return null;
+    };
+
+    // El JSON puede venir con varias formas. Intentamos las más comunes:
+    // - data.Allowances.Beat_VMG, data.Allowances["90"], etc.
+    // - data.TA.beat, data.TA.r90, etc.
+    // - data.SingleNumber.WL_ToD, data.SingleNumber.AP_ToD
+    const al = data.Allowances || data.allowances || data.TimeAllowances || {};
+    const sc = data.SelectedCourses || data.Selected_Courses || data.Courses || {};
+    const sn = data.SingleNumber || data.Single_Number || data.ScoringOptions || data;
+    const boat = data.Boat || data.boat || data;
+
+    return {
+      boatName:   pick(boat, "YachtName", "BoatName", "Name") || "",
+      sailNo:     pick(boat, "SailNo", "SailNumber") || "",
+      boatType:   pick(boat, "Class", "ClassName", "Type") || "",
+      certNo:     pick(boat, "CertNo", "CertificateNo") || null,
+      certRef:    pick(boat, "RefNo", "ORCRef", "Reference") || null,
+      validUntil: pick(boat, "ExpDate", "ValidUntil", "ExpirationDate") || null,
+      single: {
+        wl_tod: pick(sn, "WL_ToD", "WL_TOD", "Windward_Leeward_ToD", "CDLD") || null,
+        wl_tot: pick(sn, "WL_ToT", "WL_TOT", "Windward_Leeward_ToT") || null,
+        ap_tod: pick(sn, "AP_ToD", "AP_TOD", "APH_ToD", "APH_TOD", "All_Purpose_ToD") || null,
+        ap_tot: pick(sn, "AP_ToT", "AP_TOT", "APH_ToT", "APH_TOT", "All_Purpose_ToT") || null,
+        cld_tod:pick(sn, "CLD_ToD", "Coastal_ToD", "CoastalLongDistance_ToD") || null,
+      },
+      ta: {
+        beat: arr9(pick(al, "Beat_VMG", "BeatVMG", "Beat")),
+        r90:  arr9(pick(al, "90", "Reach_90", "Beam")),
+        run:  arr9(pick(al, "Run_VMG", "RunVMG", "Run")),
+      },
+      curves: {
+        wl:      arr9(pick(sc, "Windward_Leeward", "WL")),
+        ap:      arr9(pick(sc, "All_Purpose", "AP", "Allpurpose")),
+        coastal: arr9(pick(sc, "Coastal_Long_Distance", "Coastal", "CLD")),
+      },
+      gpH: pick(sn, "AP_ToD", "APH_ToD", "All_Purpose_ToD") || null,
+    };
+  };
+
   const handleFile = async e=>{
     const file = e.target.files?.[0];
     if(!file) return;
@@ -1096,12 +1200,20 @@ Responde SOLO JSON, sin markdown:
     <div>
       <input ref={fileRef}     type="file" accept="application/pdf" style={{display:"none"}} onChange={handleFile}/>
       <input ref={htmlFileRef} type="file" accept=".html,.htm,text/html" style={{display:"none"}} onChange={handleHtmlFile}/>
+      {/* ⚡ Descargar rating directo de la API pública de ORC (sin login, sin IA) */}
+      <button onClick={fetchFromOrcApi} disabled={busy||!sailNo}
+        style={{width:"100%",padding:"9px 0",borderRadius:7,marginBottom:6,
+          background: busy?CARD2 : GLD, color: busy?T3 : "#1a1a1a",
+          border:`1px solid ${busy?BDR:GLD}`,
+          fontSize:11,fontWeight:700,cursor:busy?"default":"pointer"}}>
+        {busy?"⏳ Descargando...":`⚡ Descargar rating de ORC (API)${sailNo?` · ${sailNo}`:""}`}
+      </button>
       {/* Botón: ir a buscar el cert en la web de ORC con el sailNo en portapapeles */}
       <button onClick={searchInOrc} disabled={busy}
         style={{width:"100%",padding:"7px 0",borderRadius:7,marginBottom:6,
           background:`${ACC}18`, color:ACC, border:`1px solid ${ACC}55`,
           fontSize:10,fontWeight:700,cursor:busy?"default":"pointer"}}>
-        🔍 Buscar cert. en ORC{sailNo?` · ${sailNo}`:""}
+        🔍 Buscar cert. manualmente en web ORC{sailNo?` · ${sailNo}`:""}
       </button>
       <button onClick={()=>fileRef.current?.click()} disabled={busy}
         style={{width:"100%",padding:"9px 0",borderRadius:7,marginBottom:5,
@@ -1318,6 +1430,22 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
                 if(rating.boatType) onUpdate("boatType", rating.boatType);
                 if(rating.certNo)   onUpdate("certNo", rating.certNo);
                 if(rating.validUntil) onUpdate("validUntil", rating.validUntil);
+
+                // ─── BIBLIOTECA: guardar el barco enriquecido para futuros campeonatos ───
+                // Componemos el barco con todos los datos disponibles + el rating nuevo.
+                const enrichedBoat = {
+                  ...b,
+                  rating: {single:rating.single, ta:rating.ta, curves:rating.curves},
+                  gpH:        rating.gpH         || b.gpH,
+                  boatType:   rating.boatType    || b.boatType,
+                  certNo:     rating.certNo,
+                  validUntil: rating.validUntil,
+                };
+                if(enrichedBoat.sailNo){
+                  cloud.saveBoatToLibrary(enrichedBoat).then(saved=>{
+                    if(saved) console.log("📚 Barco guardado en biblioteca:", enrichedBoat.sailNo);
+                  }).catch(err=>console.warn("Biblioteca:", err.message));
+                }
               }}/>
 
             {b.rating&&(
@@ -4392,6 +4520,47 @@ function NewChampWizard({onClose, onCreate}){
   const [allBoats,setAllBoats] = useState([]); // todos los barcos encontrados
   const [fleet,setFleet] = useState([]);        // barcos de la clase seleccionada
   const [ownId,setOwnId] = useState("");
+  const [libraryHits, setLibraryHits] = useState(0); // contador de barcos enriquecidos
+
+  // ─── BIBLIOTECA: enriquecer la flota con datos guardados por sailNo ─────────
+  // Para cada barco extraído, si existe en boats_library, mergeamos su rating,
+  // fotos, color, etc. (lo que viene en `boat` gana en campos básicos como nombre).
+  const enrichFleetFromLibrary = async (boats) => {
+    if (!boats?.length) return boats;
+    try {
+      const sailNos = boats.map(b => b.sailNo).filter(Boolean);
+      if (!sailNos.length) return boats;
+      const libMap = await cloud.getBoatsFromLibrary(sailNos);
+      if (libMap.size === 0) return boats;
+      let hits = 0;
+      const enriched = boats.map(b => {
+        const key = cloud.normSail(b.sailNo || "");
+        const fromLib = libMap.get(key);
+        if (!fromLib) return b;
+        hits++;
+        // El barco extraído (b) tiene los datos del campeonato actual (bowNum, cls, etc.).
+        // De la biblioteca tomamos lo que el barco actual no tenga: rating, fotos, etc.
+        return {
+          ...fromLib,            // todos los datos guardados (rating, fotos, color, certNo, etc.)
+          ...b,                  // los del campeonato actual ganan (bowNum, cls, nombre actualizado)
+          rating:    b.rating    || fromLib.rating,    // si el campeonato no trae rating, usa el de library
+          gpH:       b.gpH       || fromLib.gpH,
+          boatType:  b.boatType  || fromLib.boatType,
+          color:     b.color     || fromLib.color,
+          photoBeat: b.photoBeat || fromLib.photoBeat,
+          photoRun:  b.photoRun  || fromLib.photoRun,
+          certNo:    fromLib._library?.cert_no    || b.certNo,
+          validUntil:fromLib._library?.valid_until || b.validUntil,
+        };
+      });
+      setLibraryHits(hits);
+      if (hits > 0) console.log(`📚 Biblioteca: ${hits}/${boats.length} barcos enriquecidos con rating guardado`);
+      return enriched;
+    } catch (err) {
+      console.warn("enrichFleetFromLibrary:", err.message);
+      return boats;
+    }
+  };
   const [scoring,setScoring] = useState(DEFAULT_SCORING);
   const [loading,setLoading] = useState(false);
   const [err,setErr] = useState("");
@@ -4433,20 +4602,28 @@ function NewChampWizard({onClose, onCreate}){
       setFoundClasses(cls);
       if(!champName.trim()&&result.eventName) setChampName(result.eventName);
       setStep(cls.length>1?"3c":4);
-      if(cls.length<=1){ const colored=result.boats.map((b,i)=>({...b,color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]})); setFleet(colored); setOwnId(colored.find(b=>b.own)?.id||colored[0]?.id||""); }
+      if(cls.length<=1){
+        const colored=result.boats.map((b,i)=>({...b,color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]}));
+        // BIBLIOTECA: enriquecer con ratings guardados antes de mostrar
+        const enriched = await enrichFleetFromLibrary(colored);
+        setFleet(enriched);
+        setOwnId(enriched.find(b=>b.own)?.id||enriched[0]?.id||"");
+      }
     }catch(e){setErr("❌ Error: "+e.message+". Usa el método manual abajo ↓");}
     setLoading(false);
   };
 
-  const applyClass = (cls)=>{
+  const applyClass = async (cls)=>{
     setSelectedClass(cls);
     const filtered = cls==="todas" ? allBoats : allBoats.filter(b=>b.cls===cls);
     // Preservar colores originales si existen, sino asignar de BOAT_COLORS
     const colored = filtered.map((b,i)=>({...b, color:b.color||BOAT_COLORS[i%BOAT_COLORS.length]}));
+    // BIBLIOTECA: enriquecer con ratings guardados antes de mostrar
+    const enriched = await enrichFleetFromLibrary(colored);
     // Detectar el barco propio (own:true o primer barco ESP)
-    const ownBoat = colored.find(b=>b.own) || colored.find(b=>b.sailNo?.startsWith("ESP")) || colored[0];
-    setFleet(colored);
-    setOwnId(ownBoat?.id||colored[0]?.id||"");
+    const ownBoat = enriched.find(b=>b.own) || enriched.find(b=>b.sailNo?.startsWith("ESP")) || enriched[0];
+    setFleet(enriched);
+    setOwnId(ownBoat?.id||enriched[0]?.id||"");
     setStep(4);
   };
 
@@ -4704,6 +4881,14 @@ function NewChampWizard({onClose, onCreate}){
               </div>
             ) : (<>
             <div style={{marginBottom:10}}>
+              {libraryHits>0&&(
+                <div style={{display:"flex",alignItems:"center",gap:7,padding:"7px 10px",background:`${GRN}15`,border:`1px solid ${GRN}44`,borderRadius:7,marginBottom:8}}>
+                  <span style={{fontSize:14}}>📚</span>
+                  <span style={{fontSize:10,color:GRN,fontWeight:700,lineHeight:1.4}}>
+                    Biblioteca: {libraryHits} de {fleet.length} barco{fleet.length!==1?"s":""} cargado{libraryHits!==1?"s":""} con rating guardado de campeonatos anteriores. ¡Ya tienen certificado!
+                  </span>
+                </div>
+              )}
               {selectedClass&&selectedClass!=="todas"&&(
                 <div style={{display:"flex",alignItems:"center",gap:7,padding:"6px 10px",background:`${ACC}15`,border:`1px solid ${ACC}33`,borderRadius:7,marginBottom:8}}>
                   <span style={{fontSize:12}}>⛵</span>
