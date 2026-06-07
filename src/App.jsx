@@ -5413,6 +5413,277 @@ function LibraryManager({onClose}){
   );
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  LOGIN SCREEN (Fase 1 — Auth con Magic Link)                            ║
+// ║  Modal de login. El usuario introduce su email y recibe un magic link.  ║
+// ║  Cuando hace clic en el link del email, vuelve a la app autenticado.    ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+function LoginScreen({ onClose, defaultEmail = "" }) {
+  const [email, setEmail] = useState(defaultEmail);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [sent, setSent] = useState(false);
+
+  const handleSend = async () => {
+    setMsg("");
+    if (!email.trim() || !email.includes("@")) {
+      setMsg("❌ Introduce un email válido");
+      return;
+    }
+    setBusy(true);
+    try {
+      await cloud.signInWithEmail(email.trim());
+      setSent(true);
+      setMsg(`✅ Revisa tu email (${email.trim()}). Haz clic en el enlace para entrar. Puedes cerrar esta ventana.`);
+    } catch (e) {
+      setMsg("❌ " + e.message);
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+      <div style={{background:BG,maxWidth:380,width:"100%",borderRadius:10,padding:"18px 16px",border:`1px solid ${BDR}`}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:T1}}>🔐 Iniciar sesión</div>
+            <div style={{fontSize:10,color:T2,marginTop:2}}>Magic link sin contraseña</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",color:T2,fontSize:18,border:"none",cursor:"pointer",padding:"4px 10px"}}>✕</button>
+        </div>
+
+        {!sent && (
+          <>
+            <div style={{fontSize:11,color:T2,lineHeight:1.5,marginBottom:12}}>
+              Introduce tu email. Te enviaremos un enlace mágico para entrar sin contraseña.
+              <br/><br/>
+              Si tu admin te ha invitado a un campeonato, usa el <strong style={{color:T1}}>mismo email</strong> que él/ella ha registrado.
+            </div>
+            <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"&&!busy) handleSend(); }}
+              placeholder="tu@email.com" autoFocus
+              style={{width:"100%",padding:"10px 12px",fontSize:13,background:CARD,color:T1,border:`1px solid ${BDR}`,borderRadius:7,boxSizing:"border-box",marginBottom:10}}/>
+            <button onClick={handleSend} disabled={busy||!email.trim()}
+              style={{width:"100%",padding:"11px",background:busy?CARD2:ACC,color:busy?T3:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:700,cursor:busy?"default":"pointer",marginBottom:8}}>
+              {busy ? "⏳ Enviando..." : "✉️ Enviar enlace mágico"}
+            </button>
+          </>
+        )}
+
+        {msg && (
+          <div style={{padding:"9px 11px",background:msg.startsWith("✅")?`${GRN}15`:`${RED}15`,border:`1px solid ${msg.startsWith("✅")?GRN:RED}44`,borderRadius:7,fontSize:11,color:msg.startsWith("✅")?GRN:RED,lineHeight:1.5,marginBottom:8}}>
+            {msg}
+          </div>
+        )}
+
+        <button onClick={onClose} style={{width:"100%",padding:"9px",background:CARD,color:T2,border:`1px solid ${BDR}`,borderRadius:7,fontSize:11,cursor:"pointer",fontWeight:700}}>
+          {sent ? "Cerrar" : "Cancelar (seguir como invitado)"}
+        </button>
+
+        <div style={{fontSize:9,color:T3,marginTop:12,lineHeight:1.5,textAlign:"center"}}>
+          ¿No tienes cuenta? Se creará automáticamente.<br/>
+          ¿Puedes seguir sin iniciar sesión? Sí — los campeonatos legacy (por código) seguirán funcionando.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  TEAM MANAGER (Fase 1 — UI para invitar/listar/eliminar miembros)       ║
+// ║  Modal accesible desde la cabecera del campeonato (botón "👥 Equipo").  ║
+// ║  Solo admin puede invitar/eliminar; crew solo ve la lista.              ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+function TeamManager({ championshipId, championshipName, currentUserEmail, myRole, onClose }) {
+  const [members, setMembers] = useState(null);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newRole, setNewRole] = useState("crew");
+  const [confirmDel, setConfirmDel] = useState(null);
+  const isAdmin = myRole === "admin";
+
+  const load = async () => {
+    setErr("");
+    try {
+      const list = await cloud.listMembers(championshipId);
+      setMembers(list);
+    } catch (e) {
+      setErr("❌ " + e.message);
+      setMembers([]);
+    }
+  };
+  useEffect(() => { load(); }, [championshipId]);
+
+  const handleInvite = async () => {
+    setMsg("");
+    if (!newEmail.includes("@")) { setMsg("❌ Email no válido"); return; }
+    setBusy(true);
+    try {
+      await cloud.inviteMember(championshipId, newEmail.trim(), newRole);
+      setMsg(`✅ Invitado: ${newEmail.trim()} (${newRole}). Recibirá un email con el enlace mágico.`);
+      setNewEmail("");
+      setNewRole("crew");
+      await load();
+    } catch (e) {
+      setMsg("❌ " + e.message);
+    }
+    setBusy(false);
+    setTimeout(() => setMsg(""), 6000);
+  };
+
+  const handleDelete = async (email) => {
+    setBusy(true);
+    try {
+      await cloud.removeMember(championshipId, email);
+      setMsg(`✅ Eliminado: ${email}`);
+      await load();
+    } catch (e) {
+      setMsg("❌ " + e.message);
+    }
+    setBusy(false);
+    setConfirmDel(null);
+    setTimeout(() => setMsg(""), 4000);
+  };
+
+  const handleRoleChange = async (email, role) => {
+    try {
+      await cloud.updateMemberRole(championshipId, email, role);
+      await load();
+    } catch (e) {
+      setMsg("❌ " + e.message);
+      setTimeout(() => setMsg(""), 4000);
+    }
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:1100,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"6px",overflowY:"auto"}}>
+      <div style={{background:BG,maxWidth:520,width:"100%",borderRadius:10,padding:"14px 12px",border:`1px solid ${BDR}`,marginTop:"40px",marginBottom:"40px"}}>
+
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:T1}}>👥 Equipo del campeonato</div>
+            <div style={{fontSize:10,color:T2,marginTop:2}}>{championshipName}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",color:T2,fontSize:18,border:"none",cursor:"pointer",padding:"4px 10px"}}>✕</button>
+        </div>
+
+        {err && <div style={{padding:"8px 10px",background:`${RED}15`,border:`1px solid ${RED}44`,borderRadius:7,fontSize:10,color:RED,marginBottom:10}}>{err}</div>}
+        {msg && <div style={{padding:"8px 10px",background:msg.startsWith("✅")?`${GRN}15`:`${RED}15`,border:`1px solid ${msg.startsWith("✅")?GRN:RED}44`,borderRadius:7,fontSize:10,color:msg.startsWith("✅")?GRN:RED,marginBottom:10,lineHeight:1.4}}>{msg}</div>}
+
+        {/* Formulario invitar (solo admin) */}
+        {isAdmin && (
+          <div style={{padding:"10px 12px",background:CARD,borderRadius:8,border:`1px solid ${ACC}44`,marginBottom:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:ACC,marginBottom:8}}>+ Invitar nuevo miembro</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 95px",gap:6,marginBottom:6}}>
+              <input type="email" value={newEmail} onChange={e=>setNewEmail(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"&&!busy) handleInvite(); }}
+                placeholder="email@del.tripulante"
+                style={{padding:"8px 10px",fontSize:11,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:6,boxSizing:"border-box"}}/>
+              <select value={newRole} onChange={e=>setNewRole(e.target.value)}
+                style={{padding:"8px 10px",fontSize:11,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:6,boxSizing:"border-box"}}>
+                <option value="crew">Tripulante</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <button onClick={handleInvite} disabled={busy||!newEmail.includes("@")}
+              style={{width:"100%",padding:"8px",background:busy?CARD2:ACC,color:busy?T3:"#fff",border:"none",borderRadius:6,fontSize:11,fontWeight:700,cursor:busy?"default":"pointer"}}>
+              {busy ? "⏳ Invitando..." : "✉️ Invitar y enviar enlace mágico"}
+            </button>
+            <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.4}}>
+              El invitado recibirá un email con un enlace. Al pulsarlo entrará automáticamente al campeonato.
+            </div>
+          </div>
+        )}
+
+        {!isAdmin && (
+          <div style={{padding:"8px 10px",background:`${T3}10`,border:`1px solid ${BDR}`,borderRadius:7,fontSize:10,color:T2,marginBottom:10,lineHeight:1.5}}>
+            ℹ️ Eres <strong style={{color:T1}}>tripulante</strong>. Solo el admin del campeonato puede invitar o eliminar miembros.
+          </div>
+        )}
+
+        {/* Lista de miembros */}
+        <div style={{fontSize:10,color:T2,marginBottom:6,fontWeight:700}}>
+          MIEMBROS {members ? `(${members.length})` : ""}
+        </div>
+        {members === null ? (
+          <div style={{textAlign:"center",padding:20,color:T2,fontSize:11}}>⏳ Cargando...</div>
+        ) : members.length === 0 ? (
+          <div style={{textAlign:"center",padding:"20px",color:T2,fontSize:11,fontStyle:"italic"}}>
+            Sin miembros todavía
+          </div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"50vh",overflowY:"auto"}}>
+            {members.map(m => {
+              const isMe = m.email.toLowerCase() === (currentUserEmail||"").toLowerCase();
+              const pending = !m.joined_at;
+              return (
+                <div key={m.email} style={{padding:"8px 10px",background:CARD,borderRadius:7,border:`1px solid ${isMe?GRN+"66":BDR}`,display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <span style={{fontSize:11,fontWeight:700,color:T1,wordBreak:"break-all"}}>{m.email}</span>
+                      {isMe && <span style={{fontSize:8,color:GRN,background:`${GRN}20`,padding:"1px 6px",borderRadius:4,fontWeight:700}}>TÚ</span>}
+                      {pending && <span style={{fontSize:8,color:GLD,background:`${GLD}20`,padding:"1px 6px",borderRadius:4,fontWeight:700}}>PENDIENTE</span>}
+                    </div>
+                    <div style={{fontSize:9,color:T3,marginTop:2}}>
+                      {pending ? "Sin entrar todavía" : `Activo desde ${new Date(m.joined_at).toLocaleDateString("es-ES")}`}
+                    </div>
+                  </div>
+                  {isAdmin && !isMe ? (
+                    <select value={m.role} onChange={e=>handleRoleChange(m.email, e.target.value)}
+                      style={{padding:"4px 6px",fontSize:10,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:5}}>
+                      <option value="crew">Tripulante</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  ) : (
+                    <span style={{fontSize:9,color:m.role==="admin"?GLD:CYN,background:`${m.role==="admin"?GLD:CYN}15`,padding:"3px 8px",borderRadius:4,fontWeight:700,textTransform:"uppercase"}}>
+                      {m.role==="admin"?"Admin":"Tripulante"}
+                    </span>
+                  )}
+                  {isAdmin && !isMe && (
+                    <button onClick={()=>setConfirmDel(m)} disabled={busy}
+                      style={{background:`${RED}15`,color:RED,border:`1px solid ${RED}44`,borderRadius:5,padding:"4px 8px",fontSize:9,cursor:"pointer",fontWeight:700}}>
+                      Baja
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Confirmación borrar */}
+        {confirmDel && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1300,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+            <div style={{background:BG,padding:"16px 14px",borderRadius:10,maxWidth:340,border:`1px solid ${RED}55`}}>
+              <div style={{fontSize:13,fontWeight:700,color:T1,marginBottom:8}}>Eliminar miembro</div>
+              <div style={{fontSize:11,color:T2,marginBottom:14,lineHeight:1.5}}>
+                ¿Eliminar <strong style={{color:T1}}>{confirmDel.email}</strong> del campeonato?
+                <br/><span style={{color:T3,fontSize:10}}>Perderá acceso inmediatamente.</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                <button onClick={()=>setConfirmDel(null)} disabled={busy}
+                  style={{padding:"8px 0",fontSize:11,background:CARD,color:T2,border:`1px solid ${BDR}`,borderRadius:6,cursor:"pointer"}}>
+                  Cancelar
+                </button>
+                <button onClick={()=>handleDelete(confirmDel.email)} disabled={busy}
+                  style={{padding:"8px 0",fontSize:11,background:RED,color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontWeight:700}}>
+                  {busy?"⏳":"Eliminar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <button onClick={onClose} style={{width:"100%",marginTop:14,padding:"10px",background:CARD,color:T2,border:`1px solid ${BDR}`,borderRadius:7,fontSize:11,cursor:"pointer",fontWeight:700}}>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, onSyncOrc}){
   const [confirm2,setConfirm2] = useState(null);
   const [clearing,setClearing] = useState(false);
@@ -5821,6 +6092,47 @@ export default function App(){
   const [champsList, setChampsList] = useState([]);
   const [currentId,  setCurrentId]  = useState(null);
   const [showWizard, setShowWizard] = useState(false);
+
+  // ─── AUTH (Fase 1) ─────────────────────────────────────────────────────────
+  const [authUser, setAuthUser] = useState(null);  // {id, email, ...} o null
+  const [showLogin, setShowLogin] = useState(false);
+  const [showTeam, setShowTeam] = useState(false);
+  const [myRole, setMyRole] = useState(null); // "admin" | "crew" | null
+
+  // Detectar sesión inicial + escuchar cambios login/logout
+  useEffect(() => {
+    let unsub = null;
+    (async () => {
+      try {
+        const user = await cloud.getCurrentUser();
+        setAuthUser(user);
+      } catch {}
+      unsub = cloud.onAuthChange((user, event) => {
+        setAuthUser(user);
+        if (event === "SIGNED_IN") {
+          // Si entra desde un magic link, limpiar la URL
+          if (typeof window !== "undefined" && window.location.hash.includes("access_token")) {
+            try { window.history.replaceState(null, "", window.location.pathname); } catch {}
+          }
+        }
+      });
+    })();
+    return () => { if (unsub) unsub(); };
+  }, []);
+
+  // Cuando cambia el user o el campeonato actual, recargar mi rol
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!authUser || !state?._cloudId) { setMyRole(null); return; }
+      try {
+        const role = await cloud.myRoleInChampionship(state._cloudId);
+        if (!cancelled) setMyRole(role);
+      } catch { if (!cancelled) setMyRole(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [authUser?.id, state?._cloudId]);
+
   // Rol del dispositivo actual (guardado localmente, no compartido)
   const [role,       setRole]       = useState(()=>localStorage.getItem('orc-role')||'patron');
   const [theme,      setTheme]      = useState(()=>localStorage.getItem('orc-theme')||'dark');
@@ -6109,6 +6421,20 @@ export default function App(){
     <ErrorBoundary>
       {showWizard&&<NewChampWizard onClose={()=>setShowWizard(false)} onCreate={createChamp}/>}
 
+      {/* Pantalla de login (Fase 1) */}
+      {showLogin && <LoginScreen onClose={()=>setShowLogin(false)}/>}
+
+      {/* Gestor de equipo del campeonato actual (Fase 1) */}
+      {showTeam && state?._cloudId && (
+        <TeamManager
+          championshipId={state._cloudId}
+          championshipName={state.champ?.name || "Campeonato"}
+          currentUserEmail={authUser?.email}
+          myRole={myRole}
+          onClose={()=>setShowTeam(false)}
+        />
+      )}
+
       {/* Modal selector de rol */}
       {showRoles&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:9998,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={()=>setShowRoles(false)}>
@@ -6160,6 +6486,40 @@ export default function App(){
             <span style={{fontSize:13}}>{currentRole.icon}</span>
             <span style={{fontSize:9,color:currentRole.col,fontWeight:700}}>{currentRole.label}</span>
           </button>
+          {/* Botón Login / Usuario (Fase 1 auth) */}
+          {authUser ? (
+            <button onClick={()=>{
+              const ok = window.confirm(`Sesión actual: ${authUser.email}\n\n¿Cerrar sesión?`);
+              if(ok) cloud.signOut();
+            }} style={{
+              display:"flex",alignItems:"center",gap:4,padding:"4px 9px",
+              background:`${GRN}22`,border:`1px solid ${GRN}55`,borderRadius:18,cursor:"pointer",flexShrink:0,
+              maxWidth:130
+            }} title={authUser.email}>
+              <span style={{fontSize:11}}>👤</span>
+              <span style={{fontSize:9,color:GRN,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                {authUser.email.split("@")[0]}
+              </span>
+            </button>
+          ) : (
+            <button onClick={()=>setShowLogin(true)} style={{
+              display:"flex",alignItems:"center",gap:4,padding:"4px 9px",
+              background:`${ACC}22`,border:`1px solid ${ACC}55`,borderRadius:18,cursor:"pointer",flexShrink:0
+            }}>
+              <span style={{fontSize:11}}>🔐</span>
+              <span style={{fontSize:9,color:ACC,fontWeight:700}}>Login</span>
+            </button>
+          )}
+          {/* Botón Equipo (solo si autenticado y hay campeonato activo) */}
+          {authUser && state?._cloudId && (
+            <button onClick={()=>setShowTeam(true)} style={{
+              display:"flex",alignItems:"center",gap:4,padding:"4px 9px",
+              background:`${CYN}22`,border:`1px solid ${CYN}55`,borderRadius:18,cursor:"pointer",flexShrink:0
+            }} title={myRole ? `Tu rol: ${myRole}` : "Equipo del campeonato"}>
+              <span style={{fontSize:11}}>👥</span>
+              <span style={{fontSize:9,color:CYN,fontWeight:700}}>Equipo</span>
+            </button>
+          )}
         </div>
         <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
           {tab===0&&<TabHome champsList={champsList} currentChampId={currentId} state={state} onSelect={selectChamp} onDelete={handleDelete} onNew={()=>setShowWizard(true)} onSyncOrc={orcData=>{
