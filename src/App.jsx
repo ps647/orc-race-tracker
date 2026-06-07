@@ -5619,34 +5619,37 @@ function TeamManager({ championshipId, championshipName, currentUserEmail, myRol
               const isMe = m.email.toLowerCase() === (currentUserEmail||"").toLowerCase();
               const pending = !m.joined_at;
               return (
-                <div key={m.email} style={{padding:"8px 10px",background:CARD,borderRadius:7,border:`1px solid ${isMe?GRN+"66":BDR}`,display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <span style={{fontSize:11,fontWeight:700,color:T1,wordBreak:"break-all"}}>{m.email}</span>
-                      {isMe && <span style={{fontSize:8,color:GRN,background:`${GRN}20`,padding:"1px 6px",borderRadius:4,fontWeight:700}}>TÚ</span>}
-                      {pending && <span style={{fontSize:8,color:GLD,background:`${GLD}20`,padding:"1px 6px",borderRadius:4,fontWeight:700}}>PENDIENTE</span>}
-                    </div>
-                    <div style={{fontSize:9,color:T3,marginTop:2}}>
-                      {pending ? "Sin entrar todavía" : `Activo desde ${new Date(m.joined_at).toLocaleDateString("es-ES")}`}
-                    </div>
+                <div key={m.email} style={{padding:"10px 11px",background:CARD,borderRadius:7,border:`1px solid ${isMe?GRN+"66":BDR}`}}>
+                  {/* Línea 1: email + badges */}
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
+                    <span style={{fontSize:11,fontWeight:700,color:T1,wordBreak:"break-word",overflowWrap:"anywhere",minWidth:0,flex:"1 1 auto"}}>{m.email}</span>
+                    {isMe && <span style={{fontSize:8,color:GRN,background:`${GRN}20`,padding:"1px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>TÚ</span>}
+                    {pending && <span style={{fontSize:8,color:GLD,background:`${GLD}20`,padding:"1px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>PENDIENTE</span>}
                   </div>
-                  {isAdmin && !isMe ? (
-                    <select value={m.role} onChange={e=>handleRoleChange(m.email, e.target.value)}
-                      style={{padding:"4px 6px",fontSize:10,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:5}}>
-                      <option value="crew">Tripulante</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  ) : (
-                    <span style={{fontSize:9,color:m.role==="admin"?GLD:CYN,background:`${m.role==="admin"?GLD:CYN}15`,padding:"3px 8px",borderRadius:4,fontWeight:700,textTransform:"uppercase"}}>
-                      {m.role==="admin"?"Admin":"Tripulante"}
-                    </span>
-                  )}
-                  {isAdmin && !isMe && (
-                    <button onClick={()=>setConfirmDel(m)} disabled={busy}
-                      style={{background:`${RED}15`,color:RED,border:`1px solid ${RED}44`,borderRadius:5,padding:"4px 8px",fontSize:9,cursor:"pointer",fontWeight:700}}>
-                      Baja
-                    </button>
-                  )}
+                  {/* Línea 2: estado */}
+                  <div style={{fontSize:9,color:T3,marginBottom:6}}>
+                    {pending ? "Sin entrar todavía" : `Activo desde ${new Date(m.joined_at).toLocaleDateString("es-ES")}`}
+                  </div>
+                  {/* Línea 3: rol + acciones */}
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    {isAdmin && !isMe ? (
+                      <select value={m.role} onChange={e=>handleRoleChange(m.email, e.target.value)}
+                        style={{flex:1,padding:"5px 8px",fontSize:10,background:BG,color:T1,border:`1px solid ${BDR}`,borderRadius:5}}>
+                        <option value="crew">Tripulante</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    ) : (
+                      <span style={{flex:1,fontSize:9,color:m.role==="admin"?GLD:CYN,background:`${m.role==="admin"?GLD:CYN}15`,padding:"4px 10px",borderRadius:4,fontWeight:700,textTransform:"uppercase",textAlign:"center"}}>
+                        {m.role==="admin"?"👑 Admin":"⛵ Tripulante"}
+                      </span>
+                    )}
+                    {isAdmin && !isMe && (
+                      <button onClick={()=>setConfirmDel(m)} disabled={busy}
+                        style={{background:`${RED}15`,color:RED,border:`1px solid ${RED}44`,borderRadius:5,padding:"5px 10px",fontSize:9,cursor:"pointer",fontWeight:700,flexShrink:0}}>
+                        🗑 Baja
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
