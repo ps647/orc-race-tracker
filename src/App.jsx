@@ -5495,10 +5495,10 @@ function LoginScreen({ onClose, defaultEmail = "" }) {
               <div style={{fontSize:10,color:T2,marginBottom:8,lineHeight:1.5}}>
                 Copia el <strong style={{color:T1}}>código de 6 dígitos</strong> del email y pégalo aquí:
               </div>
-              <input type="text" value={otpCode} onChange={e=>setOtpCode(e.target.value.replace(/\D/g,"").slice(0,6))}
+              <input type="text" value={otpCode} onChange={e=>setOtpCode(e.target.value.replace(/\D/g,"").slice(0,10))}
                 onKeyDown={e=>{ if(e.key==="Enter"&&!verifying) handleVerify(); }}
-                placeholder="123456" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
-                style={{width:"100%",padding:"12px",fontSize:18,background:CARD,color:T1,border:`1px solid ${BDR}`,borderRadius:7,boxSizing:"border-box",marginBottom:8,textAlign:"center",letterSpacing:"6px",fontWeight:700,fontFamily:"monospace"}}/>
+                placeholder="123456" inputMode="numeric" autoComplete="one-time-code" maxLength={10}
+                style={{width:"100%",padding:"12px",fontSize:18,background:CARD,color:T1,border:`1px solid ${BDR}`,borderRadius:7,boxSizing:"border-box",marginBottom:8,textAlign:"center",letterSpacing:"4px",fontWeight:700,fontFamily:"monospace"}}/>
               <button onClick={handleVerify} disabled={verifying||otpCode.length<6}
                 style={{width:"100%",padding:"10px",background:verifying?CARD2:GRN,color:verifying?T3:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:700,cursor:verifying?"default":"pointer"}}>
                 {verifying ? "⏳ Verificando..." : "✅ Entrar con el código"}
@@ -6240,13 +6240,9 @@ export default function App(){
     return () => { cancelled = true; };
   }, [authUser?.id, state?._cloudId]);
 
-  // Fase 3: si soy crew y la pestaña actual no es Regatas/En Vivo/Tablas, redirigir
-  useEffect(() => {
-    const isCrewNow = !!authUser && myRole === "crew";
-    if (isCrewNow && ![1,2,3].includes(tab)) {
-      setTab(2); // En Vivo por defecto para tripulante
-    }
-  }, [authUser, myRole, tab]);
+  // (Eliminado en simplificación: todos los autenticados ven todas las pestañas)
+  // Mantenemos el detector myRole solo para mostrar el badge informativo,
+  // pero NO restringe acceso a nada.
 
   // Rol del dispositivo actual (guardado localmente, no compartido)
   const [role,       setRole]       = useState(()=>localStorage.getItem('orc-role')||'patron');
@@ -6530,11 +6526,8 @@ export default function App(){
   );
 
   const activeRace=state.races?.find(r=>r.id===state.activeRaceId);
-  // ─── FASE 3: Restricción de pestañas por rol del miembro ────────────────────
-  // Si el usuario está autenticado Y es miembro 'crew' del campeonato actual,
-  // solo ve Regatas / En Vivo / Tablas. El admin ve todo (incluido Inicio, Result, Config).
-  // Los usuarios anónimos (modo legacy joinCode) ven todo como antes — compatibilidad.
-  const ALL_TABS = [
+
+  const TABS = [
     {icon:"🏠",label:"Inicio",  idx:0},
     {icon:"🏁",label:"Regatas", idx:1},
     {icon:"🚩",label:"En Vivo", idx:2},
@@ -6542,10 +6535,6 @@ export default function App(){
     {icon:"📊",label:"Result.", idx:4},
     {icon:"⚙️",label:"Config",  idx:5},
   ];
-  const isCrew = !!authUser && myRole === "crew";
-  const TABS = isCrew
-    ? ALL_TABS.filter(t => [1,2,3].includes(t.idx))   // Crew solo ve Regatas, En Vivo, Tablas
-    : ALL_TABS;
 
   return(
     <ErrorBoundary>
@@ -6625,20 +6614,18 @@ export default function App(){
             <span style={{fontSize:13}}>{currentRole.icon}</span>
             <span style={{fontSize:9,color:currentRole.col,fontWeight:700}}>{currentRole.label}</span>
           </button>
-          {/* Botón Login / Usuario (Fase 1 auth) */}
+          {/* Botón Login / Usuario (simplificado: solo email, sin distinción de rol) */}
           {authUser ? (
             <button onClick={()=>{
-              const ok = window.confirm(`Sesión actual: ${authUser.email}\nRol en este campeonato: ${myRole==='admin'?'Admin':myRole==='crew'?'Tripulante':'(ninguno)'}\n\n¿Cerrar sesión?`);
+              const ok = window.confirm(`Sesión: ${authUser.email}\n\n¿Cerrar sesión?`);
               if(ok) cloud.signOut();
             }} style={{
               display:"flex",alignItems:"center",gap:4,padding:"4px 9px",
-              background:`${myRole==='admin'?GLD:myRole==='crew'?CYN:GRN}22`,
-              border:`1px solid ${myRole==='admin'?GLD:myRole==='crew'?CYN:GRN}55`,
-              borderRadius:18,cursor:"pointer",flexShrink:0,maxWidth:140
-            }} title={`${authUser.email} · ${myRole||'sin rol'}`}>
-              <span style={{fontSize:11}}>{myRole==='admin'?'👑':myRole==='crew'?'⛵':'👤'}</span>
-              <span style={{fontSize:9,color:myRole==='admin'?GLD:myRole==='crew'?CYN:GRN,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                {myRole==='admin' ? 'Admin' : myRole==='crew' ? 'Tripulante' : authUser.email.split("@")[0]}
+              background:`${GRN}22`,border:`1px solid ${GRN}55`,borderRadius:18,cursor:"pointer",flexShrink:0,maxWidth:140
+            }} title={authUser.email}>
+              <span style={{fontSize:11}}>👤</span>
+              <span style={{fontSize:9,color:GRN,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                {authUser.email.split("@")[0]}
               </span>
             </button>
           ) : (
