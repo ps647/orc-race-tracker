@@ -809,3 +809,22 @@ export async function getChampionshipMeta(championshipId) {
     .maybeSingle();
   return data || null;
 }
+
+// ─── OTP de 6 dígitos (alternativa al magic link, mejor en móviles) ───────
+// Verifica el código de 6 dígitos que llega en el email de Supabase.
+// El usuario copia el código manualmente, evitando el lío del link en webviews.
+export async function verifyOtpCode(email, token) {
+  if (!isCloudEnabled()) throw new Error("Supabase no configurado");
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  const cleanToken = String(token || "").trim().replace(/\s+/g, "");
+  if (!cleanEmail || !cleanEmail.includes("@")) throw new Error("Email no válido");
+  if (!cleanToken || cleanToken.length < 6) throw new Error("Código no válido (deben ser 6 dígitos)");
+  const sb = getClient();
+  const { data, error } = await sb.auth.verifyOtp({
+    email: cleanEmail,
+    token: cleanToken,
+    type: "email",
+  });
+  if (error) throw error;
+  return { ok: true, user: data?.user || null };
+}
