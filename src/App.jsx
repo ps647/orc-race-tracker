@@ -999,6 +999,14 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
         setBusy(false); return;
       }
 
+      // Helper para copiar JSON al portapapeles (útil para debug del parser)
+      const copyJsonToClipboard = async (obj, label) => {
+        try{
+          await navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+          return ` 📋 ${label} copiado al portapapeles — pégalo a Claude.`;
+        }catch{ return ""; }
+      };
+
       // ORC devuelve un JSON con esta estructura típica:
       //   { rms: [ {barco1} ], Countries: [...], ScoringOptions: [...] }
       // El barco viene en data.rms[0]. Si rms está vacío, no encontró el barco.
@@ -1010,18 +1018,19 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
         boatData = data.rms;
       } else {
         // No hay rms o está vacío
-        setMsg(`⚠️ ORC no encontró el barco con sailNo "${sn}". Verifica el formato (ej: ESP-52801, USA-520) o usa el botón verde "Subir HTML".`);
+        const tip = await copyJsonToClipboard(data, "JSON completo");
+        setMsg(`⚠️ ORC no encontró el barco con sailNo "${sn}".${tip}`);
         setBusy(false); return;
       }
 
       const rating = parseOrcJson(boatData);
       const s = rating.single || {};
       if(s.wl_tot==null && s.wl_tod==null && s.ap_tod==null){
-        // No encontramos single numbers en el sitio esperado. Loggeamos las claves
-        // disponibles para ayudar al usuario a reportarlas.
-        const keys = Object.keys(boatData).slice(0, 30).join(", ");
+        // No encontramos single numbers. Auto-copy del boatData al clipboard.
+        const tip = await copyJsonToClipboard(boatData, "JSON del barco");
+        const keys = Object.keys(boatData).slice(0, 12).join(", ");
         console.warn("🔍 Claves disponibles en boatData:", Object.keys(boatData));
-        setMsg(`⚠️ ORC devolvió datos pero no encontré los single numbers. Claves disponibles: ${keys.slice(0,150)}... Mira la consola (F12) y pásamelas.`);
+        setMsg(`⚠️ JSON recibido pero claves desconocidas (${keys}...).${tip}`);
         setBusy(false); return;
       }
       onRatingExtracted(rating);
@@ -1031,8 +1040,8 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
       if(s.wl_tod!=null) parts.push(`W/L ToD ${s.wl_tod}`);
       if(s.ap_tod!=null) parts.push(`AP ToD ${s.ap_tod}`);
       const curvasOk = rating.ta?.beat?.length === 9;
-      const curvasNota = curvasOk ? " · curvas 4-24kt ✓" : " · sin curvas";
-      setMsg(`✅ Descargado de ORC · ${rating.boatType||""} · ${parts.join(" · ")}${curvasNota} · (API directa)`);
+      const curvasNota = curvasOk ? " · curvas 4-24kt ✓" : " · single number only (sin curvas detalladas — sube el HTML si las quieres)";
+      setMsg(`✅ ${rating.boatType||""} · ${parts.join(" · ")}${curvasNota}`);
     }catch(e){
       setMsg(`❌ Error: ${e.message}. Prueba el botón verde "Subir HTML" si la API directa falla.`);
     }
@@ -1040,57 +1049,79 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
   };
 
   // Parser del JSON que devuelve la API pública de ORC.
-  // El formato exacto puede variar; intentamos varios nombres de campos comunes
-  // basándonos en el formato RMS de ORC. Si no encuentra algo, lo deja a null.
+  // Formato real descubierto experimentalmente: data.rms[0] es un objeto plano
+  // con ~284 claves. Los nombres relevantes son:
+  //   APHD / APHT  → All Purpose ToD/ToT (Single Number AP)
+  //   GPH          → Global Performance Handicap (≈ APHD)
+  //   TMF_Inshore  → Time Multiplying Factor Inshore (≈ ToT W/L)
+  //   TMF_Offshore → ToT Coastal/Long Distance
+  //   TND_Inshore_Medium / TN_Inshore_Medium → W/L ToD/ToT (Triple Number Medium)
+  //   TND_Inshore_Low/High / TN_Inshore_Low/High → bandas de viento W/L
+  //   TND_Offshore_Medium / TN_Offshore_Medium  → Coastal ToD/ToT
+  //   Pred_Up_TOD/TOT, Pred_Down_TOD/TOT → Predom. Upwind/Downwind
+  // IMPORTANTE: esta API NO incluye las curvas de Time Allowance por viento
+  // (Beat_VMG, 90°, Run_VMG en 9 bandas). Esas solo están en el HTML del cert.
   const parseOrcJson = (data) => {
-    // Helper para buscar un valor por varios alias de nombre
     const pick = (obj, ...keys) => {
       for (const k of keys) {
-        if (obj?.[k] != null) return obj[k];
+        const v = obj?.[k];
+        if (v != null && v !== "") return v;
       }
       return null;
     };
-    // Helper para extraer array numérico de 9 valores
-    const arr9 = (v) => {
-      if (!v) return null;
-      if (Array.isArray(v) && v.length >= 9) return v.slice(0, 9).map(x => parseFloat(x));
-      return null;
+    const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+
+    // Single numbers principales
+    const apTod = num(pick(data, "APHD", "GPH", "APH_TOD", "AP_ToD"));
+    const apTot = num(pick(data, "APHT", "APH_TOT", "AP_ToT"));
+    // W/L = Inshore Medium en la API (es la representación estándar del Windward/Leeward single)
+    const wlTod = num(pick(data, "TND_Inshore_Medium", "WL_ToD", "WL_TOD"));
+    const wlTot = num(pick(data, "TN_Inshore_Medium", "TMF_Inshore", "WL_ToT", "WL_TOT"));
+    // Coastal/Long Distance = Offshore Medium
+    const cldTod = num(pick(data, "TND_Offshore_Medium", "CLD_ToD", "Coastal_ToD"));
+
+    // Triple numbers (bandas de viento) — útiles si se quiere scoring por viento real
+    const triple = {
+      wl_low:    num(pick(data, "TND_Inshore_Low")),
+      wl_med:    wlTod,
+      wl_high:   num(pick(data, "TND_Inshore_High")),
+      coast_low: num(pick(data, "TND_Offshore_Low")),
+      coast_med: cldTod,
+      coast_high:num(pick(data, "TND_Offshore_High")),
     };
 
-    // El JSON puede venir con varias formas. Intentamos las más comunes:
-    // - data.Allowances.Beat_VMG, data.Allowances["90"], etc.
-    // - data.TA.beat, data.TA.r90, etc.
-    // - data.SingleNumber.WL_ToD, data.SingleNumber.AP_ToD
-    const al = data.Allowances || data.allowances || data.TimeAllowances || {};
-    const sc = data.SelectedCourses || data.Selected_Courses || data.Courses || {};
-    const sn = data.SingleNumber || data.Single_Number || data.ScoringOptions || data;
-    const boat = data.Boat || data.boat || data;
+    // Fechas: ORC suele dar IssueDate (formato "yyyy-mm-dd")
+    let validUntil = pick(data, "ExpDate", "ValidUntil", "ValidTo");
+    if (!validUntil) {
+      // Si no hay ExpDate explícita, asumir 31/12 del año en curso o del IssueDate
+      const issue = pick(data, "IssueDate");
+      if (issue) {
+        const m = String(issue).match(/(\d{4})/);
+        if (m) validUntil = `${m[1]}-12-31`;
+      }
+    }
 
     return {
-      boatName:   pick(boat, "YachtName", "BoatName", "Name") || "",
-      sailNo:     pick(boat, "SailNo", "SailNumber") || "",
-      boatType:   pick(boat, "Class", "ClassName", "Type") || "",
-      certNo:     pick(boat, "CertNo", "CertificateNo") || null,
-      certRef:    pick(boat, "RefNo", "ORCRef", "Reference") || null,
-      validUntil: pick(boat, "ExpDate", "ValidUntil", "ExpirationDate") || null,
+      boatName:   pick(data, "YachtName", "BoatName") || "",
+      sailNo:     pick(data, "SailNo") || "",
+      boatType:   pick(data, "Class", "C_Type") || "",
+      certNo:     pick(data, "CertNo") || null,
+      certRef:    pick(data, "RefNo") || null,
+      validUntil: validUntil || null,
       single: {
-        wl_tod: pick(sn, "WL_ToD", "WL_TOD", "Windward_Leeward_ToD", "CDLD") || null,
-        wl_tot: pick(sn, "WL_ToT", "WL_TOT", "Windward_Leeward_ToT") || null,
-        ap_tod: pick(sn, "AP_ToD", "AP_TOD", "APH_ToD", "APH_TOD", "All_Purpose_ToD") || null,
-        ap_tot: pick(sn, "AP_ToT", "AP_TOT", "APH_ToT", "APH_TOT", "All_Purpose_ToT") || null,
-        cld_tod:pick(sn, "CLD_ToD", "Coastal_ToD", "CoastalLongDistance_ToD") || null,
+        wl_tod: wlTod,
+        wl_tot: wlTot,
+        ap_tod: apTod,
+        ap_tot: apTot,
+        cld_tod: cldTod,
       },
-      ta: {
-        beat: arr9(pick(al, "Beat_VMG", "BeatVMG", "Beat")),
-        r90:  arr9(pick(al, "90", "Reach_90", "Beam")),
-        run:  arr9(pick(al, "Run_VMG", "RunVMG", "Run")),
-      },
-      curves: {
-        wl:      arr9(pick(sc, "Windward_Leeward", "WL")),
-        ap:      arr9(pick(sc, "All_Purpose", "AP", "Allpurpose")),
-        coastal: arr9(pick(sc, "Coastal_Long_Distance", "Coastal", "CLD")),
-      },
-      gpH: pick(sn, "AP_ToD", "APH_ToD", "All_Purpose_ToD") || null,
+      // La API NO devuelve curvas Time Allowance — quedan nulas, el cliente las
+      // puede completar después subiendo el HTML del certificado.
+      ta: { beat: null, r90: null, run: null },
+      curves: { wl: null, ap: null, coastal: null },
+      triple,
+      gpH: apTod, // GPH = ToD All Purpose
+      _source: "orc-api",
     };
   };
 
@@ -4540,6 +4571,81 @@ function NewChampWizard({onClose, onCreate}){
   const [fleet,setFleet] = useState([]);        // barcos de la clase seleccionada
   const [ownId,setOwnId] = useState("");
   const [libraryHits, setLibraryHits] = useState(0); // contador de barcos enriquecidos
+  const [autoLoading, setAutoLoading] = useState(false);  // descarga masiva en curso
+  const [autoMsg, setAutoMsg] = useState("");             // mensaje de progreso/resultado
+
+  // ─── DESCARGA MASIVA: cargar ratings de TODA la flota desde la API ORC ─────
+  // Itera por cada barco sin rating, llama a la API ORC, parsea, actualiza el
+  // barco en el state y lo guarda en la biblioteca. Es la operación "1-click"
+  // que rellena toda la flota antes de empezar la regata.
+  const loadAllRatingsFromOrc = async () => {
+    const candidates = fleet.filter(b => b.sailNo && (!b.rating || !b.rating.single?.ap_tod));
+    if (candidates.length === 0) {
+      setAutoMsg("✅ Todos los barcos ya tienen rating cargado");
+      setTimeout(()=>setAutoMsg(""), 3000);
+      return;
+    }
+    setAutoLoading(true);
+    let okCount = 0, failCount = 0;
+    const updated = [...fleet];
+    for (let i = 0; i < candidates.length; i++) {
+      const b = candidates[i];
+      setAutoMsg(`⚡ Descargando ${i+1}/${candidates.length}: ${b.name} (${b.sailNo})...`);
+      try {
+        // Normalizar sailNo al formato PAIS-NUMERO
+        let sn = String(b.sailNo).toUpperCase().replace(/\s+/g, "");
+        const m = sn.match(/^([A-Z]{2,4})-?(\d+)$/);
+        if (m) sn = `${m[1]}-${m[2]}`;
+        const url = `/api/orc-cert?sailNo=${encodeURIComponent(sn)}&ext=json`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!res.ok || !Array.isArray(data.rms) || data.rms.length === 0) {
+          failCount++;
+          continue;
+        }
+        const boatData = data.rms[0];
+        // Parser inline (mismo formato real descubierto: APHD, APHT, TND_Inshore_Medium...)
+        const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+        const apTod = num(boatData.APHD ?? boatData.GPH);
+        const apTot = num(boatData.APHT);
+        const wlTod = num(boatData.TND_Inshore_Medium);
+        const wlTot = num(boatData.TN_Inshore_Medium ?? boatData.TMF_Inshore);
+        if (apTod == null && wlTod == null) {
+          failCount++;
+          continue;
+        }
+        const single = {
+          wl_tod: wlTod, wl_tot: wlTot,
+          ap_tod: apTod, ap_tot: apTot,
+          cld_tod: num(boatData.TND_Offshore_Medium),
+        };
+        const rating = { single, ta:{beat:null,r90:null,run:null}, curves:{wl:null,ap:null,coastal:null} };
+        // Actualizar el barco en la lista
+        const idx = updated.findIndex(x => x.id === b.id);
+        if (idx >= 0) {
+          updated[idx] = {
+            ...updated[idx],
+            rating,
+            gpH:        apTod || updated[idx].gpH,
+            gpT:        apTot || updated[idx].gpT,
+            boatType:   boatData.Class || updated[idx].boatType,
+            certNo:     boatData.CertNo || updated[idx].certNo,
+            validUntil: boatData.ExpDate || (boatData.IssueDate ? String(boatData.IssueDate).slice(0,4)+"-12-31" : updated[idx].validUntil),
+          };
+          // Guardar en biblioteca de forma asíncrona (no bloqueante)
+          cloud.saveBoatToLibrary(updated[idx]).catch(()=>{});
+        }
+        okCount++;
+      } catch (e) {
+        console.warn(`Falló ${b.sailNo}:`, e.message);
+        failCount++;
+      }
+    }
+    setFleet(updated);
+    setAutoLoading(false);
+    setAutoMsg(`✅ ${okCount} barco${okCount!==1?"s":""} cargado${okCount!==1?"s":""}${failCount?` · ${failCount} fallido${failCount!==1?"s":""} (usa el botón ⚡ individual o "Subir HTML")`:""}`);
+    setTimeout(()=>setAutoMsg(""), 8000);
+  };
 
   // ─── BIBLIOTECA: enriquecer la flota con datos guardados por sailNo ─────────
   // Para cada barco extraído, si existe en boats_library, mergeamos su rating,
@@ -4906,6 +5012,20 @@ function NewChampWizard({onClose, onCreate}){
                   <span style={{fontSize:10,color:GRN,fontWeight:700,lineHeight:1.4}}>
                     Biblioteca: {libraryHits} de {fleet.length} barco{fleet.length!==1?"s":""} cargado{libraryHits!==1?"s":""} con rating guardado de campeonatos anteriores. ¡Ya tienen certificado!
                   </span>
+                </div>
+              )}
+              {/* Botón mágico: cargar ratings de toda la flota desde la API ORC */}
+              {fleet.some(b=>b.sailNo && (!b.rating || !b.rating.single?.ap_tod)) && (
+                <button onClick={loadAllRatingsFromOrc} disabled={autoLoading}
+                  style={{width:"100%",padding:"10px 0",borderRadius:7,marginBottom:8,
+                    background: autoLoading?CARD2:GLD, color: autoLoading?T3:"#1a1a1a",
+                    border:`1px solid ${GLD}`,fontSize:11,fontWeight:700,cursor:autoLoading?"default":"pointer"}}>
+                  {autoLoading ? "⏳ Descargando..." : `⚡ Cargar ratings de toda la flota desde ORC (${fleet.filter(b=>b.sailNo && (!b.rating || !b.rating.single?.ap_tod)).length} barcos)`}
+                </button>
+              )}
+              {autoMsg && (
+                <div style={{padding:"7px 10px",background:autoMsg.startsWith("✅")?`${GRN}15`:`${CYN}15`,border:`1px solid ${autoMsg.startsWith("✅")?GRN:CYN}44`,borderRadius:7,fontSize:10,color:autoMsg.startsWith("✅")?GRN:CYN,marginBottom:8,lineHeight:1.4}}>
+                  {autoMsg}
                 </div>
               )}
               {selectedClass&&selectedClass!=="todas"&&(
