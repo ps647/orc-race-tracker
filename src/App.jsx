@@ -2742,6 +2742,13 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
   const [manual, setManual] = useState(false); // ¿el usuario eligió boya a mano?
   const [flash,  setFlash]  = useState(null);  // barco recién tomado (feedback)
   const [openChip, setOpenChip] = useState(null); // chip abierto para corregir
+  const [photoDb, setPhotoDb]   = useState({});
+  const [srvLoaded, setSrvLoaded] = useState(false);
+
+  useEffect(()=>{
+    loadPhotoDb().then(d=>setPhotoDb(d||{}));
+    loadServerPhotos().then(()=>setSrvLoaded(true));
+  },[]);
 
   // Boya sugerida = la más atrasada que aún le falta a alguien de la flota.
   const suggested = useMemo(()=>{
@@ -2780,30 +2787,67 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
     setTimeout(()=>setFlash(f=>f===b.id?null:f), 450);
   };
 
+  // Foto del barco. En boyas de ceñida/offset se usa la de ceñida y en las de
+  // popa/llegada la de spi, que es como lo vas a ver realmente desde el barco.
+  const photoType = (legDef?.kind==="run"||legDef?.kind==="finish") ? "run" : "beat";
+  const photoOf = b => {
+    const k = b.sailNo||b.id;
+    const pick = t => getServerPhotoUrl(k,t) || loadLocalPhoto(k,t) || photoDb[k]?.[t]
+                   || b[t==="beat"?"photoUrlBeat":"photoUrlRun"] || null;
+    const url = pick(photoType) || pick(photoType==="beat"?"run":"beat");
+    return (url && url!=="(local)") ? url : null;
+  };
+
   // ── Rejilla de barcos pendientes ──────────────────────────────────────────
   const Tile = ({b}) => {
-    const col  = b.color || ACC;
-    const isOwn= b.id===ownId;
+    const col   = b.color || ACC;
+    const isOwn = b.id===ownId;
+    const hit   = flash===b.id;
+    const photo = photoOf(b);
+    const sail  = b.sailNo || b.id || "";
+    // El nº de vela manda: se encoge según su longitud para que nunca se corte.
+    const sailSize = sail.length<=4 ? 26 : sail.length<=6 ? 22 : sail.length<=8 ? 18 : 15;
     return (
       <button onClick={()=>tap(b)} disabled={!started||isEspectador}
         style={{
-          display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-          gap:2, minHeight:64, padding:"6px 4px", borderRadius:12,
-          background: flash===b.id ? GRN : `${col}1f`,
-          border: `2px solid ${flash===b.id?GRN:(isOwn?col:`${col}77`)}`,
+          position:"relative", display:"flex", flexDirection:"column",
+          alignItems:"stretch", justifyContent:"flex-end",
+          minHeight:72, padding:0, borderRadius:12,
+          background: hit ? GRN : (photo ? "#000" : `${col}1f`),
+          border: `2px solid ${hit?GRN:(isOwn?col:`${col}77`)}`,
           boxShadow: isOwn ? `0 0 0 2px ${col}44` : "none",
-          color:T1, cursor:started&&!isEspectador?"pointer":"default",
+          cursor: started&&!isEspectador?"pointer":"default",
           opacity: started?1:.45, overflow:"hidden", transition:"background .12s",
         }}>
-        <span style={{
-          fontSize:26, fontWeight:900, lineHeight:1,
-          color: flash===b.id ? "#fff" : (isDark(col)?T1:col),
-        }}>{b.bowNum ?? (b.sailNo||"").slice(-3)}</span>
-        <span style={{
-          fontSize:10, fontWeight:700, lineHeight:1.1, textAlign:"center",
-          color: flash===b.id ? "#fff" : T2,
-          maxWidth:"100%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-        }}>{b.name}</span>
+        {photo && !hit && (
+          <>
+            <img src={photo} alt="" style={{
+              position:"absolute", inset:0, width:"100%", height:"100%",
+              objectFit:"cover", opacity:.95,
+            }}/>
+            {/* Degradado para que el nº de vela se lea sobre cualquier foto */}
+            <div style={{
+              position:"absolute", left:0, right:0, bottom:0, height:"72%",
+              background:"linear-gradient(to top, rgba(0,0,0,.88) 0%, rgba(0,0,0,.55) 45%, transparent 100%)",
+            }}/>
+          </>
+        )}
+        {/* Banda de color del barco, para reconocerlo aunque no haya foto */}
+        <div style={{position:"absolute",top:0,left:0,right:0,height:4,background:col}}/>
+        <div style={{position:"relative",padding:"5px 6px",textAlign:"center"}}>
+          <div style={{
+            fontSize:sailSize, fontWeight:900, lineHeight:1.05, letterSpacing:-.3,
+            color: hit ? "#fff" : (photo ? "#fff" : (isDark(col)?T1:col)),
+            textShadow: photo && !hit ? "0 1px 3px rgba(0,0,0,.9)" : "none",
+            whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+          }}>{sail}</div>
+          <div style={{
+            fontSize:10, fontWeight:700, lineHeight:1.15,
+            color: hit ? "#fff" : (photo ? "#dfe7ee" : T2),
+            textShadow: photo && !hit ? "0 1px 3px rgba(0,0,0,.9)" : "none",
+            whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+          }}>{b.name}</div>
+        </div>
       </button>
     );
   };
@@ -2859,8 +2903,8 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
         {pendientes.length>0 ? (
           <div style={{
             flex:1, minHeight:0, display:"grid", gap:6,
-            gridTemplateColumns:"repeat(auto-fit,minmax(92px,1fr))",
-            gridAutoRows:"minmax(64px,1fr)", overflow:"hidden",
+            gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",
+            gridAutoRows:"minmax(72px,1fr)", overflow:"hidden",
           }}>
             {pendientes.map(b=><Tile key={b.id} b={b}/>)}
           </div>
@@ -2882,7 +2926,7 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
               <button key={b.id} onClick={()=>tap(b)} title={`Añadir tiempo atrasado en ${legDef?.label}`}
                 style={{padding:"3px 8px",borderRadius:11,background:CARD2,border:`1px solid ${BDR}`,
                         color:T3,fontSize:10,fontWeight:700,opacity:.65}}>
-                {b.bowNum?`${b.bowNum} `:""}{b.name}
+                {b.name} · {b.sailNo||b.id}
               </button>
             ))}
           </div>
@@ -2915,7 +2959,8 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
                   style={{flex:1,minWidth:0,textAlign:"left",background:"none",border:"none",padding:0,
                           color:T1,fontSize:11,fontWeight:700,whiteSpace:"nowrap",
                           overflow:"hidden",textOverflow:"ellipsis"}}>
-                  {b.bowNum?`${b.bowNum} `:""}{b.name}{isOwn?" · TÚ":""}
+                  {b.name}{isOwn?" · TÚ":""}
+                  <span style={{color:T3,fontWeight:600}}> · {b.sailNo||b.id}</span>
                 </button>
                 {open && !isEspectador ? (
                   <div style={{display:"flex",gap:3,flexShrink:0}}>

@@ -35,8 +35,11 @@ Aplicación de clasificación ORC en tiempo real para regatas de vela.
 Pestaña **🎯 Boyas** dentro de *En Vivo*. Es ahora la vista por defecto en regata.
 
 1. Eliges arriba la boya en la que estás (Ceñida 1, Offset 1, Popa 1, Ceñida 2, Llegada…).
-2. Aparece la flota completa en rejilla, con el número de proa grande. Cabe en
-   pantalla sin scroll.
+2. Aparece la flota completa en rejilla, cada barco con su **foto de fondo** y el
+   **número de vela completo** encima. Cabe en pantalla sin scroll.
+   En boyas de ceñida/offset se usa la foto de ceñida y en popa/llegada la de spi.
+   Si un barco no tiene foto, la baldosa usa su color. Las fotos se cargan en
+   Config → Fotos de la flota.
 3. Tocas el barco que pasa → el tiempo se guarda en el acto, en esa boya.
    El barco desaparece de la rejilla y baja a la tira de "tomados", ordenada por
    paso, con el gap al primero y el gap a nuestro barco.
