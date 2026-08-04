@@ -30,6 +30,23 @@ Aplicación de clasificación ORC en tiempo real para regatas de vela.
 - Cuenta atrás configurable
 - Posicionamiento de barcos durante la ceñida/popa
 
+## Toma de tiempos por boya (nuevo flujo)
+
+Pestaña **🎯 Boyas** dentro de *En Vivo*. Es ahora la vista por defecto en regata.
+
+1. Eliges arriba la boya en la que estás (Ceñida 1, Offset 1, Popa 1, Ceñida 2, Llegada…).
+2. Aparece la flota completa en rejilla, con el número de proa grande. Cabe en
+   pantalla sin scroll.
+3. Tocas el barco que pasa → el tiempo se guarda en el acto, en esa boya.
+   El barco desaparece de la rejilla y baja a la tira de "tomados", ordenada por
+   paso, con el gap al primero y el gap a nuestro barco.
+4. Si un barco se te escapa, no pasa nada: lo tomas en la boya siguiente. Los
+   tiempos se guardan con su boya explícita, así que saltarse boyas no descuadra
+   la clasificación ORC.
+
+Para corregir, toca el nombre en la tira de tomados: ±1 s o borrar.
+El flujo antiguo (⏱ Crono → 📝 Tiempos) sigue disponible.
+
 ## Nota sobre multi-dispositivo
 
 En esta versión, los datos se guardan en localStorage (por dispositivo).

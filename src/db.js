@@ -215,6 +215,23 @@ export async function recordPassage(state, { raceLocalId, boatSailNo, leg, realT
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
+// Borra UN paso concreto (barco + boya) — al corregir un tiempo mal tomado.
+export async function removePassage(state, { raceLocalId, boatSailNo, leg }) {
+  if (!isCloudEnabled()) return { ok: true, local: true };
+  try {
+    const sb = getClient();
+    const champId = lsGet(chKey(state._champId))?._cloudId;
+    if (!champId) return { ok: false };
+    const raceCloudId = await raceCloudIdFor(sb, champId, raceLocalId);
+    if (!raceCloudId) return { ok: false };
+    const { error } = await sb.from("passages").delete()
+      .eq("race_id", raceCloudId)
+      .eq("boat_sail_no", normSail(boatSailNo))
+      .eq("leg", leg);
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 // Borra TODOS los passages de una prueba en la nube (para "Limpiar todos").
 export async function clearRacePassages(state, raceLocalId) {
   if (!isCloudEnabled()) return { ok: true, local: true };

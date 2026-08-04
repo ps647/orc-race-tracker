@@ -75,6 +75,15 @@ function matchPB(p, b){
   const pSail = ns(p.boatSailNo || p.boatId);
   return !!bSail && bSail===pSail;
 }
+// Boya MÁS ALTA registrada de un barco (0 = ninguna todavía).
+// IMPORTANTE: sustituye al antiguo "nº de pasos". Desde la toma por boya se
+// permite saltarse boyas (p.ej. no dar tiempo en el Offset), así que contar
+// passages ya NO equivale al número de boya en la que va el barco.
+function maxLegOf(passages, b){
+  let m = 0;
+  for(const p of (passages||[])){ if(matchPB(p,b) && p.leg>m) m = p.leg; }
+  return m;
+}
 // Resuelve el id local del barco al que pertenece un paso (o null).
 function passageBoatId(p, fleet){
   const b = fleet.find(x=>matchPB(p,x));
@@ -728,7 +737,7 @@ function CourseDiagram({course,passages,fleet,started,onTap,legRank={},boatProg=
 
   // Posiciones de barcos (sin cambios)
   const bpos = fleet.map((b,idx)=>{
-    const lc = passages.filter(p=>p.boatId===b.id).length;
+    const lc = maxLegOf(passages, b);
     let progress = boatProg[b.id] ?? null;
     if(progress===null){
       if(started && lc<6){
@@ -2717,6 +2726,224 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
   );
 }
 
+// ── 🎯 TOMA POR BOYA ─────────────────────────────────────────────────────────
+// Flujo inverso al de "marcar tiempo + asignar después": aquí PRIMERO eliges la
+// boya en la que estás y luego vas tocando el barco que pasa. El tiempo se
+// guarda en ese mismo instante, en esa boya concreta.
+//
+// Claves de diseño (Copa del Rey: 10 barcos en <1 min por la boya de ceñida):
+//  · Un toque = un tiempo. Sin confirmación, sin diálogos.
+//  · Rejilla que SIEMPRE cabe en pantalla: nada de scroll para buscar un barco.
+//  · El barco tomado desaparece de la rejilla y baja a la tira de "tomados".
+//  · Saltarse una boya es legal: la boya se guarda explícita, no por conteo.
+function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectador,
+                   onRecord, onDeletePassage, onAdjust}){
+  const [legN,   setLegN]   = useState(null);
+  const [manual, setManual] = useState(false); // ¿el usuario eligió boya a mano?
+  const [flash,  setFlash]  = useState(null);  // barco recién tomado (feedback)
+  const [openChip, setOpenChip] = useState(null); // chip abierto para corregir
+
+  // Boya sugerida = la más atrasada que aún le falta a alguien de la flota.
+  const suggested = useMemo(()=>{
+    const pend = fleet.map(b=>maxLegOf(passages,b)+1).filter(n=>n<=legs.length);
+    return pend.length ? Math.min(...pend) : legs.length;
+  },[fleet,passages,legs.length]);
+
+  const active = legN==null ? suggested : legN;
+  const legDef = legs[active-1];
+
+  // Reparto de la flota respecto a la boya activa
+  const tomados = useMemo(()=>{
+    return passages
+      .filter(p=>p.leg===active)
+      .map(p=>({p, b:fleet.find(x=>matchPB(p,x))}))
+      .filter(x=>x.b)
+      .sort((a,z)=>a.p.realTime-z.p.realTime);
+  },[passages,active,fleet]);
+  const tomadosIds = new Set(tomados.map(x=>x.b.id));
+
+  const pendientes = fleet
+    .filter(b=>!tomadosIds.has(b.id) && maxLegOf(passages,b) < active)
+    .sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
+  const adelantados = fleet
+    .filter(b=>!tomadosIds.has(b.id) && maxLegOf(passages,b) >= active)
+    .sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
+
+  const t0   = tomados.length ? tomados[0].p.realTime : null;
+  const ownP = tomados.find(x=>x.b.id===ownId)?.p || null;
+
+  const tap = b => {
+    if(isEspectador || !started) return;
+    onRecord(b.id, active);
+    setFlash(b.id);
+    if(navigator.vibrate) navigator.vibrate(35);
+    setTimeout(()=>setFlash(f=>f===b.id?null:f), 450);
+  };
+
+  // ── Rejilla de barcos pendientes ──────────────────────────────────────────
+  const Tile = ({b}) => {
+    const col  = b.color || ACC;
+    const isOwn= b.id===ownId;
+    return (
+      <button onClick={()=>tap(b)} disabled={!started||isEspectador}
+        style={{
+          display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+          gap:2, minHeight:64, padding:"6px 4px", borderRadius:12,
+          background: flash===b.id ? GRN : `${col}1f`,
+          border: `2px solid ${flash===b.id?GRN:(isOwn?col:`${col}77`)}`,
+          boxShadow: isOwn ? `0 0 0 2px ${col}44` : "none",
+          color:T1, cursor:started&&!isEspectador?"pointer":"default",
+          opacity: started?1:.45, overflow:"hidden", transition:"background .12s",
+        }}>
+        <span style={{
+          fontSize:26, fontWeight:900, lineHeight:1,
+          color: flash===b.id ? "#fff" : (isDark(col)?T1:col),
+        }}>{b.bowNum ?? (b.sailNo||"").slice(-3)}</span>
+        <span style={{
+          fontSize:10, fontWeight:700, lineHeight:1.1, textAlign:"center",
+          color: flash===b.id ? "#fff" : T2,
+          maxWidth:"100%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+        }}>{b.name}</span>
+      </button>
+    );
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%",gap:6}}>
+
+      {/* ── Pestañas de boya ───────────────────────────────────────────── */}
+      <div style={{display:"flex",gap:4,flexWrap:"wrap",flexShrink:0}}>
+        {legs.map(L=>{
+          const on   = L.n===active;
+          const done = passages.filter(p=>p.leg===L.n).length;
+          return (
+            <button key={L.n} onClick={()=>{setLegN(L.n);setManual(true);setOpenChip(null);}}
+              style={{
+                flex:"1 1 88px", minWidth:80, padding:"9px 4px", borderRadius:9,
+                background: on ? L.col : CARD2,
+                border: `1px solid ${on?L.col:(L.n===suggested?`${L.col}88`:BDR)}`,
+                color: on ? "#fff" : T2, fontSize:11, fontWeight:800, lineHeight:1.25,
+              }}>
+              <div style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{L.label}</div>
+              <div style={{fontSize:9,fontWeight:700,opacity:.85}}>
+                {done}/{fleet.length}{L.n===suggested&&!on?" ·":""}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Barra de estado de la boya activa ──────────────────────────── */}
+      <div style={{
+        display:"flex",alignItems:"center",gap:8,flexShrink:0,
+        padding:"6px 10px",borderRadius:8,background:`${legDef?.col||ACC}14`,
+        border:`1px solid ${legDef?.col||ACC}44`,
+      }}>
+        <span style={{width:9,height:9,borderRadius:2,background:legDef?.col||ACC,flexShrink:0}}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:12,fontWeight:800,color:T1}}>{legDef?.label||`Boya ${active}`}</div>
+          <div style={{fontSize:9,color:T3}}>
+            {pendientes.length ? `Faltan ${pendientes.length}` : "Todos tomados"}
+            {adelantados.length ? ` · ${adelantados.length} ya por delante` : ""}
+          </div>
+        </div>
+        {manual && active!==suggested && (
+          <button onClick={()=>{setLegN(null);setManual(false);}}
+            style={{padding:"5px 9px",borderRadius:7,background:CARD2,border:`1px solid ${BDR}`,
+                    color:T2,fontSize:10,fontWeight:700}}>↻ Auto</button>
+        )}
+      </div>
+
+      {/* ── Rejilla de barcos pendientes (sin scroll) ──────────────────── */}
+      <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",gap:6}}>
+        {pendientes.length>0 ? (
+          <div style={{
+            flex:1, minHeight:0, display:"grid", gap:6,
+            gridTemplateColumns:"repeat(auto-fit,minmax(92px,1fr))",
+            gridAutoRows:"minmax(64px,1fr)", overflow:"hidden",
+          }}>
+            {pendientes.map(b=><Tile key={b.id} b={b}/>)}
+          </div>
+        ) : (
+          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",
+                       background:CARD2,borderRadius:10,color:T2,fontSize:12,textAlign:"center",padding:16}}>
+            {started
+              ? <span>✅ Nadie pendiente en <b style={{color:legDef?.col}}>{legDef?.label}</b>.<br/>
+                  <span style={{fontSize:10,color:T3}}>Pasa a la siguiente boya cuando quieras.</span></span>
+              : "Arranca la prueba en ⏱ Crono para empezar a tomar tiempos."}
+          </div>
+        )}
+
+        {/* Barcos que ya van por delante: pequeños, por si hay que corregir */}
+        {adelantados.length>0 && (
+          <div style={{flexShrink:0,display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+            <span style={{fontSize:9,color:T3,fontWeight:700}}>Ya por delante:</span>
+            {adelantados.map(b=>(
+              <button key={b.id} onClick={()=>tap(b)} title={`Añadir tiempo atrasado en ${legDef?.label}`}
+                style={{padding:"3px 8px",borderRadius:11,background:CARD2,border:`1px solid ${BDR}`,
+                        color:T3,fontSize:10,fontWeight:700,opacity:.65}}>
+                {b.bowNum?`${b.bowNum} `:""}{b.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Tira de tomados en esta boya ───────────────────────────────── */}
+      {tomados.length>0 && (
+        <div style={{flexShrink:0,maxHeight:"32%",overflowY:"auto",display:"flex",flexDirection:"column",gap:3}}>
+          <div style={{fontSize:9,color:T3,fontWeight:700}}>
+            Tomados en {legDef?.label} ({tomados.length}) · toca para corregir
+          </div>
+          {tomados.map(({p,b},i)=>{
+            const el    = startTime ? Math.round((p.realTime-startTime)/1000) : 0;
+            const gapL  = Math.round((p.realTime-t0)/1000);
+            const gapO  = ownP && b.id!==ownId ? Math.round((p.realTime-ownP.realTime)/1000) : null;
+            const isOwn = b.id===ownId;
+            const open  = openChip===`${b.id}-${p.leg}`;
+            return (
+              <div key={b.id} style={{
+                display:"flex",alignItems:"center",gap:7,padding:"5px 8px",borderRadius:7,
+                background:isOwn?`${b.color||ACC}1a`:CARD2,
+                border:isOwn?`1px solid ${b.color||ACC}66`:"1px solid transparent",
+              }}>
+                <div style={{width:17,height:17,borderRadius:9,flexShrink:0,fontSize:9,fontWeight:800,
+                             display:"flex",alignItems:"center",justifyContent:"center",
+                             background:i===0?(legDef?.col||GLD):CARD, color:i===0?"#fff":T2}}>{i+1}</div>
+                <div style={{width:5,height:19,borderRadius:2,background:b.color||BDR,flexShrink:0}}/>
+                <button onClick={()=>setOpenChip(open?null:`${b.id}-${p.leg}`)}
+                  style={{flex:1,minWidth:0,textAlign:"left",background:"none",border:"none",padding:0,
+                          color:T1,fontSize:11,fontWeight:700,whiteSpace:"nowrap",
+                          overflow:"hidden",textOverflow:"ellipsis"}}>
+                  {b.bowNum?`${b.bowNum} `:""}{b.name}{isOwn?" · TÚ":""}
+                </button>
+                {open && !isEspectador ? (
+                  <div style={{display:"flex",gap:3,flexShrink:0}}>
+                    <button onClick={()=>onAdjust(b.id,p.leg,-1000)}
+                      style={{padding:"3px 7px",borderRadius:5,background:CARD,border:`1px solid ${BDR}`,color:T2,fontSize:10,fontWeight:800}}>−1s</button>
+                    <button onClick={()=>onAdjust(b.id,p.leg,1000)}
+                      style={{padding:"3px 7px",borderRadius:5,background:CARD,border:`1px solid ${BDR}`,color:T2,fontSize:10,fontWeight:800}}>+1s</button>
+                    <button onClick={()=>{onDeletePassage(p);setOpenChip(null);}}
+                      style={{padding:"3px 7px",borderRadius:5,background:`${RED}22`,border:"none",color:RED,fontSize:10}}>🗑</button>
+                  </div>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:1,flexShrink:0}}>
+                    <span style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:T1}}>{ft(el)}</span>
+                    <span style={{display:"flex",gap:5,fontFamily:"monospace",fontSize:9}}>
+                      {i>0 && <span style={{color:T3}}>+{gapL}s</span>}
+                      {gapO!=null && <span style={{color:gapO>0?RED:GRN,fontWeight:700}}>{gapO>0?"+":""}{gapO}s</span>}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TabEnVivo({state,setState,role="patron"}){
   // ── Extraer datos del estado PRIMERO (antes de cualquier hook) ──────────
   // Esto evita el error "Cannot access X before initialization" (TDZ)
@@ -2735,7 +2962,7 @@ function TabEnVivo({state,setState,role="patron"}){
   // ── HOOKS — siempre en el mismo orden, antes de cualquier return ────────
   const [now,        setNow]       = useState(Date.now());
   const [pend,       setPend]      = useState(null);
-  const [sub,        setSub]       = useState("crono");
+  const [sub,        setSub]       = useState("boyas");
   const [copyFrom,   setCopyFrom]  = useState(null); // {boatId, time} para copiar tiempo
   const [liveNow,    setLiveNow]   = useState(Date.now()); // tick para animación
 
@@ -2770,7 +2997,7 @@ function TabEnVivo({state,setState,role="patron"}){
       // Calcular progreso de cada barco hacia su siguiente boya
       const prog={};
       fleet.forEach(b=>{
-        const leg = passages.filter(p=>p.boatId===b.id).length;
+        const leg = maxLegOf(passages, b);
         if(leg>=6){prog[b.id]=1;return;}
         const lastP = [...passages].filter(p=>p.boatId===b.id).sort((a,z)=>z.realTime-a.realTime)[0];
         const legStart = lastP?.realTime || startTime;
@@ -2805,7 +3032,7 @@ function TabEnVivo({state,setState,role="patron"}){
 
   // ── Helpers de ranking ──────────────────────────────────────────────────
   const getBoatsOnLeg = useCallback((legNum) => {
-    return fleet.filter(b=>passages.filter(p=>p.boatId===b.id).length===legNum-1);
+    return fleet.filter(b=>maxLegOf(passages,b)===legNum-1);
   },[fleet,passages]);
 
   const getEffectiveRank = useCallback((legNum) => {
@@ -2835,7 +3062,7 @@ function TabEnVivo({state,setState,role="patron"}){
 
   const activeLegs = useMemo(()=>{
     const legs=new Set();
-    fleet.forEach(b=>{const lc=passages.filter(p=>p.boatId===b.id).length;if(lc<6)legs.add(lc+1);});
+    fleet.forEach(b=>{const lc=maxLegOf(passages,b);if(lc<6)legs.add(lc+1);});
     return [...legs].sort((a,b)=>a-b);
   },[fleet,passages]);
 
@@ -2847,7 +3074,7 @@ function TabEnVivo({state,setState,role="patron"}){
   // ── Variables derivadas ─────────────────────────────────────────────────
   const displayTime  = finishedAt?(finishedAt-startTime)/1000:startTime?Math.max(0,(now-startTime)/1000):0;
   const updRace      = fn=>setState(s=>({...s,races:s.races.map(r=>r.id===s.activeRaceId?fn(r):r)}));
-  const boatLeg      = id=>{ const b=fleet.find(x=>x.id===id); return passages.filter(p=>matchPB(p,b||{id})).length; };
+  const boatLeg      = id=>{ const b=fleet.find(x=>x.id===id); return maxLegOf(passages, b||{id}); };
   const record = (id, offsetSec=0, explicitTime=null)=>{
     if(isEspectador)return;
     const nl=boatLeg(id)+1;
@@ -2865,6 +3092,22 @@ function TabEnVivo({state,setState,role="patron"}){
   const adjustPassage=(boatId,legN,deltaMs)=>{
     updRace(r=>({...r,passages:r.passages.map(p=>p.boatId===boatId&&p.leg===legN?{...p,realTime:p.realTime+deltaMs}:p)}));
   };
+  // ── Toma por boya: el tiempo se guarda EN LA BOYA INDICADA, no en la
+  //    "siguiente" del barco. Así se puede saltar una boya sin descuadrar nada.
+  const recordAtLeg = (boatId, legN, when=null)=>{
+    if(isEspectador||!started) return;
+    if(!legN || legN>raceLegs(course).length) return;
+    const b = fleet.find(x=>x.id===boatId);
+    const realTime = when ?? Date.now();
+    if(passages.some(p=>matchPB(p,b||{id:boatId})&&p.leg===legN)) return; // ya tomado
+    updRace(r=>({...r, passages:[...r.passages,
+      {boatId, boatSailNo:b?.sailNo||boatId, leg:legN, realTime, by:role}]}));
+    cloud.recordPassage(state,{raceLocalId:activeRace?.id, boatSailNo:b?.sailNo||boatId, leg:legN, realTime}).catch(()=>{});
+  };
+  const deletePassage = p=>{
+    updRace(r=>({...r, passages:r.passages.filter(x=>!(x.leg===p.leg && x.realTime===p.realTime && x.boatId===p.boatId))}));
+    cloud.removePassage(state,{raceLocalId:activeRace?.id, boatSailNo:p.boatSailNo||p.boatId, leg:p.leg}).catch(()=>{});
+  };
   const undo         = ()=>updRace(r=>({...r,passages:r.passages.slice(0,-1),finishedAt:null}));
 
   // ── MARCAS RÁPIDAS: capturar tiempo ahora, asignar barco+boya después ──
@@ -2872,9 +3115,8 @@ function TabEnVivo({state,setState,role="patron"}){
   const marks = activeRace?.marks || [];
   // ¿cuántos pasos tiene un barco? (cuenta por boatId o por sailNo normalizado)
   const passCount = boatId => {
-    const b = fleet.find(x=>x.id===boatId);
-    const sn = cloud.normSail(b?.sailNo);
-    return passages.filter(p => p.boatId===boatId || (sn && cloud.normSail(p.boatSailNo)===sn) || cloud.normSail(p.boatSailNo)===cloud.normSail(boatId)).length;
+    const b = fleet.find(x=>x.id===boatId) || {id:boatId, sailNo:boatId};
+    return maxLegOf(passages, b);
   };
   // siguiente boya que le toca a un barco = nº de pasos que ya tiene + 1
   const nextLeg = boatId => {
@@ -2948,12 +3190,12 @@ function TabEnVivo({state,setState,role="patron"}){
   const isEspectador = role==="espectador";
   const filteredFleet = useMemo(()=>{
     if(role==="barlovento") return fleet.filter(b=>{
-      const lc=passages.filter(p=>p.boatId===b.id).length;
+      const lc=maxLegOf(passages,b);
       const legType=lc<6?LEG_DEF[lc]?.type:null;
       return lc<6&&(legType==="beat"||legType==="reach");
     });
     if(role==="sotavento") return fleet.filter(b=>{
-      const lc=passages.filter(p=>p.boatId===b.id).length;
+      const lc=maxLegOf(passages,b);
       const legType=lc<6?LEG_DEF[lc]?.type:null;
       return lc<6&&legType==="run";
     });
@@ -2967,8 +3209,8 @@ function TabEnVivo({state,setState,role="patron"}){
   const boyaGroups = useMemo(()=>{
     const groups = {};
     fleetByBow.forEach(b=>{
-      const bPass = passages.filter(p=>p.boatId===b.id);
-      const lc = bPass.length;
+      const bPass = passages.filter(p=>matchPB(p,b));
+      const lc = maxLegOf(passages,b);
       const key = lc>=6 ? "fin" : String(lc);
       if(!groups[key]) groups[key]=[];
       const lastPassTime = bPass.length ? Math.max(...bPass.map(p=>p.realTime)) : Infinity;
@@ -3072,16 +3314,16 @@ function TabEnVivo({state,setState,role="patron"}){
 
         <div style={{display:"flex",gap:4,marginTop:4}}>
           <div style={{display:"flex",gap:4,flex:1,flexWrap:"wrap"}}>
-            {[["crono","⏱ Crono"],["asignar","📝 Asignar"],["std","📊 Clasi"],["comp","📋 Comparativa"]].map(([k,l])=>(
-              <button key={k} onClick={()=>setSub(k)} style={{flex:1,minWidth:64,padding:"5px 3px",borderRadius:6,fontSize:10,fontWeight:700,background:sub===k?ACC:CARD2,color:sub===k?"#fff":T2,border:`1px solid ${sub===k?ACC:BDR}`}}>{l}</button>
+            {[["boyas","🎯 Boyas"],["crono","⏱ Crono"],["asignar","📝 Tiempos"],["std","📊 Clasi"],["comp","📋 Comp"]].map(([k,l])=>(
+              <button key={k} onClick={()=>setSub(k)} style={{flex:1,minWidth:54,padding:"5px 3px",borderRadius:6,fontSize:10,fontWeight:700,background:sub===k?ACC:CARD2,color:sub===k?"#fff":T2,border:`1px solid ${sub===k?ACC:BDR}`}}>{l}</button>
             ))}
           </div>
         </div>
       </div>
 
-      <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
-        {/* Botón flotante de marcar tiempo — visible en TODAS las sub-pestañas durante la regata */}
-        {started&&(
+      <div style={{flex:1,minHeight:0,overflowY:sub==="boyas"?"hidden":"auto",padding:"8px 10px"}}>
+        {/* Botón flotante de marcar tiempo — solo en el flujo antiguo (marcar → asignar) */}
+        {started&&sub!=="boyas"&&(
           <div style={{position:"sticky",top:0,zIndex:30,paddingBottom:8,background:`linear-gradient(to bottom, ${BG} 70%, transparent)`}}>
             <button onClick={addMark} style={{width:"100%",padding:"18px 0",borderRadius:14,background:ACC,color:"#fff",fontSize:19,fontWeight:900,border:"none",cursor:"pointer",boxShadow:`0 4px 16px ${ACC}66`,letterSpacing:.5}}>
               ⏱ MARCAR TIEMPO{marks.length>0?<span style={{display:"inline-block",background:GLD,color:"#000",borderRadius:10,padding:"1px 8px",fontSize:13,marginLeft:6}}>{marks.length}</span>:""}
@@ -3091,6 +3333,14 @@ function TabEnVivo({state,setState,role="patron"}){
 
 
         {/* ── BARCOS POR BOYA — toque directo, sin confirmación ────── */}
+        {/* ── 🎯 TOMA POR BOYA (vista principal en regata) ───────────────── */}
+        {sub==="boyas"&&(
+          <TabBoyas
+            fleet={fleet} passages={passages} startTime={startTime} legs={legs}
+            ownId={ownId} started={started} isEspectador={isEspectador}
+            onRecord={recordAtLeg} onDeletePassage={deletePassage} onAdjust={adjustPassage}/>
+        )}
+
         {/* ── ⏱ CRONÓMETRO + MARCAR TIEMPO (vista principal en regata) ──── */}
         {sub==="crono"&&(
           <div style={{display:"flex",flexDirection:"column",gap:12,alignItems:"center",paddingTop:8}}>
@@ -3454,8 +3704,9 @@ function TimingTable({passages, fleet, startTime, onAdjust, isEspectador, record
   // Ordenar por posición en carrera: más boyas pasadas primero, luego por tiempo
   const sortedFleet = useMemo(()=>{
     return [...fleet].sort((a,b)=>{
-      const pA = passages.filter(p=>p.boatId===a.id), pB = passages.filter(p=>p.boatId===b.id);
-      if(pA.length !== pB.length) return pB.length - pA.length;
+      const pA = passages.filter(p=>matchPB(p,a)), pB = passages.filter(p=>matchPB(p,b));
+      const lA = maxLegOf(passages,a), lB = maxLegOf(passages,b);
+      if(lA !== lB) return lB - lA;
       if(!pA.length) return (a.bowNum||99)-(b.bowNum||99);
       const lastA = Math.max(...pA.map(p=>p.realTime));
       const lastB = Math.max(...pB.map(p=>p.realTime));
@@ -3551,8 +3802,8 @@ function TimingTable({passages, fleet, startTime, onAdjust, isEspectador, record
           </thead>
           <tbody>
             {sortedFleet.map((b,ri)=>{
-              const bPass  = passages.filter(p=>p.boatId===b.id).sort((a,z)=>a.leg-z.leg);
-              const bLeg   = bPass.length;
+              const bPass  = passages.filter(p=>matchPB(p,b)).sort((a,z)=>a.leg-z.leg);
+              const bLeg   = maxLegOf(passages,b);
               const isOwn  = b.own;
               const photo  = getPhoto(b);
               const rowBg  = isOwn?`${b.color}18`:ri%2===0?CARD2:CARD;
