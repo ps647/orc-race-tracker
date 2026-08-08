@@ -84,6 +84,57 @@ function maxLegOf(passages, b){
   for(const p of (passages||[])){ if(matchPB(p,b) && p.leg>m) m = p.leg; }
   return m;
 }
+// ── RED DE SEGURIDAD DE TIEMPOS ─────────────────────────────────────────────
+// Tanto el realtime de Supabase como el sondeo cada 3 s REEMPLAZAN el estado
+// entero con la foto que traen. Si un tiempo recién tomado todavía no ha
+// llegado a esa foto, desaparecía: el barco volvía a la rejilla y parecía que
+// el toque no había entrado (medido: vivía ~800 ms y se revertía).
+//
+// Aquí se anotan los cambios locales de tiempos y se vuelven a aplicar encima
+// de CUALQUIER estado entrante, hasta que la foto los confirme o caduquen.
+// Un tiempo tomado a mano nunca se pierde por una carrera de sincronización.
+const PENDING_TTL = 60000;
+const _pend = { adds:new Map(), dels:new Map() };
+const _pKey = (raceId, sail, leg) => `${raceId}|${cloud.normSail(sail)}|${leg}`;
+
+function pendingAddPassage(raceId, p){
+  const k = _pKey(raceId, p.boatSailNo||p.boatId, p.leg);
+  _pend.dels.delete(k);
+  _pend.adds.set(k, {raceId, p, ts:Date.now()});
+}
+function pendingDelPassage(raceId, sail, leg){
+  const k = _pKey(raceId, sail, leg);
+  _pend.adds.delete(k);
+  _pend.dels.set(k, {raceId, sail, leg, ts:Date.now()});
+}
+// Reaplica los cambios locales sobre las pruebas que llegan de fuera.
+function applyPendingPassages(races){
+  const now = Date.now();
+  for(const [k,v] of _pend.adds) if(now-v.ts > PENDING_TTL) _pend.adds.delete(k);
+  for(const [k,v] of _pend.dels) if(now-v.ts > PENDING_TTL) _pend.dels.delete(k);
+  if(!_pend.adds.size && !_pend.dels.size) return races;
+  if(!Array.isArray(races)) return races;
+  return races.map(r=>{
+    let ps = r.passages || [];
+    const keyOf = x => _pKey(r.id, x.boatSailNo||x.boatId, x.leg);
+    // 1. Quitar los que hemos borrado aquí y la nube todavía devuelve.
+    const before = ps.length;
+    ps = ps.filter(x=>!_pend.dels.has(keyOf(x)));
+    // Si ya no venían, el borrado está confirmado: se suelta el tombstone.
+    if(ps.length === before){
+      for(const [k,v] of _pend.dels) if(v.raceId===r.id) _pend.dels.delete(k);
+    }
+    // 2. Reponer los que hemos tomado aquí y la nube todavía no tiene.
+    const have = new Set(ps.map(keyOf));
+    for(const [k,v] of _pend.adds){
+      if(v.raceId !== r.id) continue;
+      if(have.has(k)){ _pend.adds.delete(k); continue; } // confirmado por la nube
+      ps = [...ps, v.p];
+    }
+    return ps === r.passages ? r : {...r, passages:ps};
+  });
+}
+
 // Resuelve el id local del barco al que pertenece un paso (o null).
 function passageBoatId(p, fleet){
   const b = fleet.find(x=>matchPB(p,x));
@@ -354,17 +405,21 @@ const WINDS=[4,6,8,10,12,14,16,20,24];
 const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
 const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:"",scoringMode:"AP_ToD",discardEvery:4,discardMin:4},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
 // Genera los tramos según el nº de vueltas.
-// Cada vuelta: Ceñida + Offset + Popa, EXCEPTO la última, que termina en Llegada
-// (tras el Offset se va directo a meta, sin bajar por popa hasta la puerta).
-// Ej. 2 vueltas: Ceñida1, Offset1, Popa1, Ceñida2, Offset2, Llegada.
-function buildLegs(vueltas=2){
+// El OFFSET no lleva tiempo por defecto: en flota grande pasan diez barcos por
+// la de barlovento y el offset en menos de un minuto y es materialmente
+// imposible cronometrar los dos. Se activa con course.tomarOffset si algún día
+// hace falta. Sin él, la ceñida absorbe su distancia (ver legDistByKind), así
+// que el recorrido total y la corrección ORC no cambian.
+// Ej. 2 vueltas sin offset: Ceñida1, Popa1, Ceñida2, Llegada.
+function buildLegs(vueltas=2, conOffset=false){
   const legs=[]; let n=1;
   for(let v=1; v<=vueltas; v++){
     const last = (v===vueltas);
     legs.push({n:n++, mark:"Boya 1", type:"beat",  label:`Ceñida ${v}`, col:"#d97706", kind:"beat"});
-    legs.push({n:n++, mark:"Offset", type:"reach", label:`Offset ${v}`, col:"#7c3aed", kind:"offset"});
+    if(conOffset)
+      legs.push({n:n++, mark:"Offset", type:"reach", label:`Offset ${v}`, col:"#7c3aed", kind:"offset"});
     if(last){
-      // Última vuelta: del offset directo a meta.
+      // Última vuelta: de barlovento directo a meta.
       legs.push({n:n++, mark:"Llegada", type:"finish", label:"Llegada", col:"#16a34a", kind:"finish"});
     } else {
       legs.push({n:n++, mark:"Puerta", type:"run", label:`Popa ${v}`, col:"#0891b2", kind:"run"});
@@ -372,9 +427,8 @@ function buildLegs(vueltas=2){
   }
   return legs;
 }
-// Tramos de una prueba (según course.vueltas; por defecto 2)
-function raceLegs(course){ return buildLegs(course?.vueltas||2); }
-const LEG_DEF=buildLegs(2);
+// Tramos de una prueba (según course.vueltas y course.tomarOffset)
+function raceLegs(course){ return buildLegs(course?.vueltas||2, !!course?.tomarOffset); }
 
 
 // ── TEMA: los tokens son CSS variables, así un único cambio de :root cambia
@@ -505,7 +559,9 @@ function vpp(b, tws, modeKey=DEFAULT_SCORING){
 // Distancia en millas de un tramo según su TIPO (kind) y las distancias del recorrido.
 function legDistByKind(kind, c){
   const m1=c?.mark1Dist??1.5, off=c?.mark1aDist??0.15, gate=c?.gateDist??0.3;
-  if(kind==="beat")   return m1;
+  // Sin tramo de offset, su distancia va dentro de la ceñida: el recorrido
+  // total se mantiene y el allowance acumulado del ORC sale igual.
+  if(kind==="beat")   return c?.tomarOffset ? m1 : +(m1+Math.max(0,off)).toFixed(3);
   if(kind==="offset") return Math.max(0.05, off);
   if(kind==="run")    return Math.max(0.1, +(m1+off-gate).toFixed(3));
   if(kind==="finish") return Math.max(0.1, +(m1+off-gate).toFixed(3)); // tras offset, bajada a meta ≈ popa
@@ -691,6 +747,8 @@ function boatMapPos(lc, idx, total, progress, atStart) {
 
 function CourseDiagram({course,passages,fleet,started,onTap,legRank={},boatProg={}}){
   const W=380, H=320;
+  const LD = raceLegs(course);      // tramos reales de esta prueba
+  const NL = LD.length;             // ya no son 6 fijos: depende de vueltas y offset
   const hasOffset = (course.mark1aDist||0) > 0;
   const isPort    = (course.mark1aSide||"port") === "port"; // port = izquierda
 
@@ -740,7 +798,7 @@ function CourseDiagram({course,passages,fleet,started,onTap,legRank={},boatProg=
     const lc = maxLegOf(passages, b);
     let progress = boatProg[b.id] ?? null;
     if(progress===null){
-      if(started && lc<6){
+      if(started && lc<NL){
         const rank=legRank[lc+1];
         progress = rank?.length>1
           ? Math.max(0.1, 0.75-(rank.indexOf(b.id)/(rank.length-1))*0.55)
@@ -796,18 +854,18 @@ function CourseDiagram({course,passages,fleet,started,onTap,legRank={},boatProg=
 
       {/* Barcos */}
       {bpos.map(({b,lc,x,y})=>{
-        const canTap = started&&lc<6;
-        const legCol = lc<6?LEG_DEF[lc]?.col||GLD:GRN;
+        const canTap = started&&lc<NL;
+        const legCol = lc<NL?LD[lc]?.col||GLD:GRN;
         return(
           <g key={b.id}>
             <circle cx={x} cy={y} r={20} fill={b.color}
-              stroke={lc>=6?"#fff":canTap?"#fff":"#333"}
-              strokeWidth={lc>=6?3:canTap?2:1} opacity={.95}/>
+              stroke={lc>=NL?"#fff":canTap?"#fff":"#333"}
+              strokeWidth={lc>=NL?3:canTap?2:1} opacity={.95}/>
             <text x={x} y={y+4} fontSize={8} fill="#000" textAnchor="middle" fontWeight="800">
               {b.name.slice(0,4)}
             </text>
-            {lc>=6&&<text x={x} y={y-25} fontSize={12} fill={GRN} textAnchor="middle">✓</text>}
-            {canTap&&<text x={x} y={y+34} fontSize={8} fill={legCol} textAnchor="middle">→{LEG_DEF[lc]?.mark}</text>}
+            {lc>=NL&&<text x={x} y={y-25} fontSize={12} fill={GRN} textAnchor="middle">✓</text>}
+            {canTap&&<text x={x} y={y+34} fontSize={8} fill={legCol} textAnchor="middle">→{LD[lc]?.mark}</text>}
             <circle cx={x} cy={y} r={30} fill="transparent"
               onClick={()=>canTap&&onTap&&onTap(b.id)}
               style={{cursor:canTap?"pointer":"default"}}/>
@@ -2726,6 +2784,102 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
   );
 }
 
+// Baldosa de barco de la toma por boya.
+// DEBE vivir a nivel de módulo: si se define dentro de TabBoyas, React la ve
+// como un tipo nuevo en cada render (y el padre re-renderiza cada 500 ms), así
+// que desmonta y vuelve a montar el <button>. Un toque que pillara ese momento
+// se perdía y había que pulsar dos veces. Con el tipo estable el DOM persiste.
+//
+// La posición de cada barco NO cambia en toda la boya: los tomados se quedan en
+// su hueco, atenuados y con su tiempo. Así la rejilla nunca se recoloca bajo el
+// dedo y puedes tomar diez barcos seguidos de memoria, sin mirar.
+const BoatTile = React.memo(function BoatTile({b, sail, photo, isOwn, state, order, el, gapOwn, disabled, onTap}){
+  const col    = b.color || ACC;
+  const taken  = state==="taken";
+  const ahead  = state==="ahead";
+  const sailSize = taken ? 12 : (sail.length<=4 ? 24 : sail.length<=6 ? 20 : sail.length<=8 ? 17 : 14);
+  return (
+    <button
+      onPointerDown={e=>{ e.preventDefault(); if(!disabled) onTap(b, Date.now()); }}
+      disabled={disabled}
+      style={{
+        position:"relative", display:"flex", flexDirection:"column",
+        alignItems:"stretch", justifyContent:"flex-end",
+        minHeight:70, padding:0, borderRadius:12,
+        background: photo ? "#000" : (taken ? `${GRN}14` : `${col}1f`),
+        border: `2px solid ${taken ? GRN : (isOwn ? col : `${col}77`)}`,
+        boxShadow: isOwn && !taken ? `0 0 0 2px ${col}44` : "none",
+        cursor: disabled?"default":"pointer",
+        opacity: ahead ? .42 : 1,
+        overflow:"hidden", touchAction:"manipulation", userSelect:"none",
+      }}>
+      {photo && (
+        <>
+          <img src={photo} alt="" draggable={false} style={{
+            position:"absolute", inset:0, width:"100%", height:"100%",
+            objectFit:"cover", pointerEvents:"none",
+            opacity: taken ? .22 : .95,
+            filter: taken ? "grayscale(1)" : "none",
+          }}/>
+          <div style={{
+            position:"absolute", left:0, right:0, bottom:0, height:"72%", pointerEvents:"none",
+            background:"linear-gradient(to top, rgba(0,0,0,.88) 0%, rgba(0,0,0,.55) 45%, transparent 100%)",
+          }}/>
+        </>
+      )}
+      {/* Franja de color del barco, para reconocerlo aunque no haya foto */}
+      <div style={{position:"absolute",top:0,left:0,right:0,height:4,
+                   background: taken ? GRN : col, pointerEvents:"none"}}/>
+
+      {/* Orden de paso por esta boya */}
+      {taken && (
+        <div style={{
+          position:"absolute", top:7, left:6, minWidth:19, height:19, borderRadius:10,
+          background:GRN, color:"#fff", fontSize:11, fontWeight:900, pointerEvents:"none",
+          display:"flex", alignItems:"center", justifyContent:"center", padding:"0 5px",
+        }}>{order}</div>
+      )}
+      {ahead && (
+        <div style={{position:"absolute",top:6,right:7,fontSize:8,fontWeight:800,
+                     color:T3,pointerEvents:"none"}}>ya pasó</div>
+      )}
+
+      <div style={{position:"relative",padding:"5px 6px",textAlign:"center",pointerEvents:"none"}}>
+        {taken ? (
+          <>
+            <div style={{fontFamily:"monospace",fontSize:19,fontWeight:900,lineHeight:1.05,
+                         color: photo?"#fff":T1,
+                         textShadow: photo?"0 1px 3px rgba(0,0,0,.9)":"none"}}>{el}</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,marginTop:1}}>
+              <span style={{fontSize:sailSize,fontWeight:700,color:photo?"#c9d4de":T3,
+                            whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"62%"}}>{sail}</span>
+              {gapOwn!=null && (
+                <span style={{fontFamily:"monospace",fontSize:11,fontWeight:800,
+                              color: gapOwn>0?RED:GRN}}>{gapOwn>0?"+":""}{gapOwn}s</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{
+              fontSize:sailSize, fontWeight:900, lineHeight:1.05, letterSpacing:-.3,
+              color: photo ? "#fff" : (isDark(col)?T1:col),
+              textShadow: photo ? "0 1px 3px rgba(0,0,0,.9)" : "none",
+              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+            }}>{sail}</div>
+            <div style={{
+              fontSize:10, fontWeight:700, lineHeight:1.15,
+              color: photo ? "#dfe7ee" : T2,
+              textShadow: photo ? "0 1px 3px rgba(0,0,0,.9)" : "none",
+              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+            }}>{b.name}</div>
+          </>
+        )}
+      </div>
+    </button>
+  );
+});
+
 // ── 🎯 TOMA POR BOYA ─────────────────────────────────────────────────────────
 // Flujo inverso al de "marcar tiempo + asignar después": aquí PRIMERO eliges la
 // boya en la que estás y luego vas tocando el barco que pasa. El tiempo se
@@ -2733,15 +2887,15 @@ function MarkAssign({mark, idx, fleet, startTime, legs, nextLeg, onAssign, onDel
 //
 // Claves de diseño (Copa del Rey: 10 barcos en <1 min por la boya de ceñida):
 //  · Un toque = un tiempo. Sin confirmación, sin diálogos.
-//  · Rejilla que SIEMPRE cabe en pantalla: nada de scroll para buscar un barco.
-//  · El barco tomado desaparece de la rejilla y baja a la tira de "tomados".
+//  · Rejilla de huecos FIJOS que siempre cabe en pantalla: ni scroll ni saltos.
+//  · El barco tomado se queda en su sitio con su tiempo y su gap contra nosotros.
 //  · Saltarse una boya es legal: la boya se guarda explícita, no por conteo.
 function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectador,
                    onRecord, onDeletePassage, onAdjust}){
   const [legN,   setLegN]   = useState(null);
   const [manual, setManual] = useState(false); // ¿el usuario eligió boya a mano?
-  const [flash,  setFlash]  = useState(null);  // barco recién tomado (feedback)
-  const [openChip, setOpenChip] = useState(null); // chip abierto para corregir
+  const [last,   setLast]   = useState(null);  // último tiempo tomado (confirmación)
+  const [editId, setEditId] = useState(null);  // barco cuyo tiempo se está corrigiendo
   const [photoDb, setPhotoDb]   = useState({});
   const [srvLoaded, setSrvLoaded] = useState(false);
 
@@ -2756,36 +2910,53 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
     return pend.length ? Math.min(...pend) : legs.length;
   },[fleet,passages,legs.length]);
 
-  const active = legN==null ? suggested : legN;
-  const legDef = legs[active-1];
+  const active  = legN==null ? suggested : legN;
+  const legDef  = legs[active-1];
 
-  // Reparto de la flota respecto a la boya activa
-  const tomados = useMemo(()=>{
-    return passages
-      .filter(p=>p.leg===active)
-      .map(p=>({p, b:fleet.find(x=>matchPB(p,x))}))
-      .filter(x=>x.b)
-      .sort((a,z)=>a.p.realTime-z.p.realTime);
+  // ── Orden FIJO de la rejilla: el mismo toda la regata, para que la posición
+  //    de cada barco sea memoria muscular. Nº de proa si lo hay, si no nombre.
+  const fleetOrdered = useMemo(()=>[...fleet].sort((a,b)=>
+    (a.bowNum??999)-(b.bowNum??999) || String(a.name).localeCompare(String(b.name),"es")
+  ),[fleet]);
+
+  // Paso de cada barco por la boya activa
+  const passAt = useMemo(()=>{
+    const m = new Map();
+    for(const p of passages){
+      if(p.leg!==active) continue;
+      const b = fleet.find(x=>matchPB(p,x));
+      if(b) m.set(b.id, p);
+    }
+    return m;
   },[passages,active,fleet]);
-  const tomadosIds = new Set(tomados.map(x=>x.b.id));
 
-  const pendientes = fleet
-    .filter(b=>!tomadosIds.has(b.id) && maxLegOf(passages,b) < active)
-    .sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
-  const adelantados = fleet
-    .filter(b=>!tomadosIds.has(b.id) && maxLegOf(passages,b) >= active)
-    .sort((a,b)=>(a.bowNum||99)-(b.bowNum||99));
+  const ordenados = [...passAt.values()].sort((a,z)=>a.realTime-z.realTime);
+  const orderOf   = new Map(ordenados.map((p,i)=>[p, i+1]));
+  const ownP      = passAt.get(ownId) || null;
+  const faltan    = fleetOrdered.filter(b=>!passAt.has(b.id) && maxLegOf(passages,b)<active).length;
 
-  const t0   = tomados.length ? tomados[0].p.realTime : null;
-  const ownP = tomados.find(x=>x.b.id===ownId)?.p || null;
+  // Candado: dos pulsaciones seguidas sobre el mismo barco llegarían antes de
+  // que el estado se haya actualizado, así que se bloquea por barco+boya.
+  const lockRef = useRef(new Set());
+  useEffect(()=>{ lockRef.current = new Set(); },[active]);
 
-  const tap = b => {
+  // La función real vive en un ref y el callback que baja a las baldosas es
+  // estable, para que React.memo pueda evitar re-renders de la rejilla.
+  const tapRef = useRef();
+  tapRef.current = (b, when) => {
     if(isEspectador || !started) return;
-    onRecord(b.id, active);
-    setFlash(b.id);
+    // Ya tomado en esta boya → abrir corrección, no registrar otra vez.
+    if(passAt.has(b.id)){ setEditId(e=>e===b.id?null:b.id); return; }
+    const key = `${b.id}-${active}`;
+    if(lockRef.current.has(key)) return;
+    lockRef.current.add(key);
+    const t = when ?? Date.now();
+    onRecord(b.id, active, t);
+    setLast({id:b.id, name:b.name, sail:b.sailNo||b.id, leg:active, t});
+    setEditId(null);
     if(navigator.vibrate) navigator.vibrate(35);
-    setTimeout(()=>setFlash(f=>f===b.id?null:f), 450);
   };
+  const tap = useCallback((b, when)=>tapRef.current(b, when), []);
 
   // Foto del barco. En boyas de ceñida/offset se usa la de ceñida y en las de
   // popa/llegada la de spi, que es como lo vas a ver realmente desde el barco.
@@ -2798,59 +2969,8 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
     return (url && url!=="(local)") ? url : null;
   };
 
-  // ── Rejilla de barcos pendientes ──────────────────────────────────────────
-  const Tile = ({b}) => {
-    const col   = b.color || ACC;
-    const isOwn = b.id===ownId;
-    const hit   = flash===b.id;
-    const photo = photoOf(b);
-    const sail  = b.sailNo || b.id || "";
-    // El nº de vela manda: se encoge según su longitud para que nunca se corte.
-    const sailSize = sail.length<=4 ? 26 : sail.length<=6 ? 22 : sail.length<=8 ? 18 : 15;
-    return (
-      <button onClick={()=>tap(b)} disabled={!started||isEspectador}
-        style={{
-          position:"relative", display:"flex", flexDirection:"column",
-          alignItems:"stretch", justifyContent:"flex-end",
-          minHeight:72, padding:0, borderRadius:12,
-          background: hit ? GRN : (photo ? "#000" : `${col}1f`),
-          border: `2px solid ${hit?GRN:(isOwn?col:`${col}77`)}`,
-          boxShadow: isOwn ? `0 0 0 2px ${col}44` : "none",
-          cursor: started&&!isEspectador?"pointer":"default",
-          opacity: started?1:.45, overflow:"hidden", transition:"background .12s",
-        }}>
-        {photo && !hit && (
-          <>
-            <img src={photo} alt="" style={{
-              position:"absolute", inset:0, width:"100%", height:"100%",
-              objectFit:"cover", opacity:.95,
-            }}/>
-            {/* Degradado para que el nº de vela se lea sobre cualquier foto */}
-            <div style={{
-              position:"absolute", left:0, right:0, bottom:0, height:"72%",
-              background:"linear-gradient(to top, rgba(0,0,0,.88) 0%, rgba(0,0,0,.55) 45%, transparent 100%)",
-            }}/>
-          </>
-        )}
-        {/* Banda de color del barco, para reconocerlo aunque no haya foto */}
-        <div style={{position:"absolute",top:0,left:0,right:0,height:4,background:col}}/>
-        <div style={{position:"relative",padding:"5px 6px",textAlign:"center"}}>
-          <div style={{
-            fontSize:sailSize, fontWeight:900, lineHeight:1.05, letterSpacing:-.3,
-            color: hit ? "#fff" : (photo ? "#fff" : (isDark(col)?T1:col)),
-            textShadow: photo && !hit ? "0 1px 3px rgba(0,0,0,.9)" : "none",
-            whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
-          }}>{sail}</div>
-          <div style={{
-            fontSize:10, fontWeight:700, lineHeight:1.15,
-            color: hit ? "#fff" : (photo ? "#dfe7ee" : T2),
-            textShadow: photo && !hit ? "0 1px 3px rgba(0,0,0,.9)" : "none",
-            whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
-          }}>{b.name}</div>
-        </div>
-      </button>
-    );
-  };
+  const editP = editId ? passAt.get(editId) : null;
+  const editB = editId ? fleet.find(x=>x.id===editId) : null;
 
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%",gap:6}}>
@@ -2861,7 +2981,7 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
           const on   = L.n===active;
           const done = passages.filter(p=>p.leg===L.n).length;
           return (
-            <button key={L.n} onClick={()=>{setLegN(L.n);setManual(true);setOpenChip(null);}}
+            <button key={L.n} onClick={()=>{setLegN(L.n);setManual(true);setEditId(null);}}
               style={{
                 flex:"1 1 88px", minWidth:80, padding:"9px 4px", borderRadius:9,
                 background: on ? L.col : CARD2,
@@ -2887,104 +3007,97 @@ function TabBoyas({fleet, passages, startTime, legs, ownId, started, isEspectado
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:12,fontWeight:800,color:T1}}>{legDef?.label||`Boya ${active}`}</div>
           <div style={{fontSize:9,color:T3}}>
-            {pendientes.length ? `Faltan ${pendientes.length}` : "Todos tomados"}
-            {adelantados.length ? ` · ${adelantados.length} ya por delante` : ""}
+            {started ? (faltan ? `Faltan ${faltan}` : "Todos tomados") : "Prueba sin arrancar"}
           </div>
         </div>
         {manual && active!==suggested && (
-          <button onClick={()=>{setLegN(null);setManual(false);}}
+          <button onClick={()=>{setLegN(null);setManual(false);setEditId(null);}}
             style={{padding:"5px 9px",borderRadius:7,background:CARD2,border:`1px solid ${BDR}`,
                     color:T2,fontSize:10,fontWeight:700}}>↻ Auto</button>
         )}
       </div>
 
-      {/* ── Rejilla de barcos pendientes (sin scroll) ──────────────────── */}
-      <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",gap:6}}>
-        {pendientes.length>0 ? (
-          <div style={{
-            flex:1, minHeight:0, display:"grid", gap:6,
-            gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",
-            gridAutoRows:"minmax(72px,1fr)", overflow:"hidden",
-          }}>
-            {pendientes.map(b=><Tile key={b.id} b={b}/>)}
+      {/* ── Corrección del barco tocado (se abre al tocar uno ya tomado) ── */}
+      {editP && editB && !isEspectador && (
+        <div style={{
+          display:"flex",alignItems:"center",gap:7,flexShrink:0,
+          padding:"6px 10px",borderRadius:8,background:CARD,border:`1px solid ${GLD}66`,
+        }}>
+          <div style={{flex:1,minWidth:0,fontSize:11,fontWeight:800,color:T1,
+                       whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+            {editB.name} <span style={{color:T3,fontWeight:600}}>· {editB.sailNo||editB.id}</span>
           </div>
-        ) : (
-          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",
-                       background:CARD2,borderRadius:10,color:T2,fontSize:12,textAlign:"center",padding:16}}>
-            {started
-              ? <span>✅ Nadie pendiente en <b style={{color:legDef?.col}}>{legDef?.label}</b>.<br/>
-                  <span style={{fontSize:10,color:T3}}>Pasa a la siguiente boya cuando quieras.</span></span>
-              : "Arranca la prueba en ⏱ Crono para empezar a tomar tiempos."}
-          </div>
-        )}
-
-        {/* Barcos que ya van por delante: pequeños, por si hay que corregir */}
-        {adelantados.length>0 && (
-          <div style={{flexShrink:0,display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
-            <span style={{fontSize:9,color:T3,fontWeight:700}}>Ya por delante:</span>
-            {adelantados.map(b=>(
-              <button key={b.id} onClick={()=>tap(b)} title={`Añadir tiempo atrasado en ${legDef?.label}`}
-                style={{padding:"3px 8px",borderRadius:11,background:CARD2,border:`1px solid ${BDR}`,
-                        color:T3,fontSize:10,fontWeight:700,opacity:.65}}>
-                {b.name} · {b.sailNo||b.id}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Tira de tomados en esta boya ───────────────────────────────── */}
-      {tomados.length>0 && (
-        <div style={{flexShrink:0,maxHeight:"32%",overflowY:"auto",display:"flex",flexDirection:"column",gap:3}}>
-          <div style={{fontSize:9,color:T3,fontWeight:700}}>
-            Tomados en {legDef?.label} ({tomados.length}) · toca para corregir
-          </div>
-          {tomados.map(({p,b},i)=>{
-            const el    = startTime ? Math.round((p.realTime-startTime)/1000) : 0;
-            const gapL  = Math.round((p.realTime-t0)/1000);
-            const gapO  = ownP && b.id!==ownId ? Math.round((p.realTime-ownP.realTime)/1000) : null;
-            const isOwn = b.id===ownId;
-            const open  = openChip===`${b.id}-${p.leg}`;
-            return (
-              <div key={b.id} style={{
-                display:"flex",alignItems:"center",gap:7,padding:"5px 8px",borderRadius:7,
-                background:isOwn?`${b.color||ACC}1a`:CARD2,
-                border:isOwn?`1px solid ${b.color||ACC}66`:"1px solid transparent",
-              }}>
-                <div style={{width:17,height:17,borderRadius:9,flexShrink:0,fontSize:9,fontWeight:800,
-                             display:"flex",alignItems:"center",justifyContent:"center",
-                             background:i===0?(legDef?.col||GLD):CARD, color:i===0?"#fff":T2}}>{i+1}</div>
-                <div style={{width:5,height:19,borderRadius:2,background:b.color||BDR,flexShrink:0}}/>
-                <button onClick={()=>setOpenChip(open?null:`${b.id}-${p.leg}`)}
-                  style={{flex:1,minWidth:0,textAlign:"left",background:"none",border:"none",padding:0,
-                          color:T1,fontSize:11,fontWeight:700,whiteSpace:"nowrap",
-                          overflow:"hidden",textOverflow:"ellipsis"}}>
-                  {b.name}{isOwn?" · TÚ":""}
-                  <span style={{color:T3,fontWeight:600}}> · {b.sailNo||b.id}</span>
-                </button>
-                {open && !isEspectador ? (
-                  <div style={{display:"flex",gap:3,flexShrink:0}}>
-                    <button onClick={()=>onAdjust(b.id,p.leg,-1000)}
-                      style={{padding:"3px 7px",borderRadius:5,background:CARD,border:`1px solid ${BDR}`,color:T2,fontSize:10,fontWeight:800}}>−1s</button>
-                    <button onClick={()=>onAdjust(b.id,p.leg,1000)}
-                      style={{padding:"3px 7px",borderRadius:5,background:CARD,border:`1px solid ${BDR}`,color:T2,fontSize:10,fontWeight:800}}>+1s</button>
-                    <button onClick={()=>{onDeletePassage(p);setOpenChip(null);}}
-                      style={{padding:"3px 7px",borderRadius:5,background:`${RED}22`,border:"none",color:RED,fontSize:10}}>🗑</button>
-                  </div>
-                ) : (
-                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:1,flexShrink:0}}>
-                    <span style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:T1}}>{ft(el)}</span>
-                    <span style={{display:"flex",gap:5,fontFamily:"monospace",fontSize:9}}>
-                      {i>0 && <span style={{color:T3}}>+{gapL}s</span>}
-                      {gapO!=null && <span style={{color:gapO>0?RED:GRN,fontWeight:700}}>{gapO>0?"+":""}{gapO}s</span>}
-                    </span>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          <button onClick={()=>onAdjust(editB.id,active,-1000)}
+            style={{padding:"5px 9px",borderRadius:6,background:CARD2,border:`1px solid ${BDR}`,color:T2,fontSize:11,fontWeight:800}}>−1s</button>
+          <button onClick={()=>onAdjust(editB.id,active,1000)}
+            style={{padding:"5px 9px",borderRadius:6,background:CARD2,border:`1px solid ${BDR}`,color:T2,fontSize:11,fontWeight:800}}>+1s</button>
+          <button onClick={()=>{
+              onDeletePassage(editP);
+              lockRef.current.delete(`${editB.id}-${active}`);
+              if(last?.id===editB.id && last?.leg===active) setLast(null);
+              setEditId(null);
+            }}
+            style={{padding:"5px 9px",borderRadius:6,background:`${RED}22`,border:"none",color:RED,fontSize:11}}>🗑</button>
+          <button onClick={()=>setEditId(null)}
+            style={{padding:"5px 8px",borderRadius:6,background:"none",border:"none",color:T3,fontSize:13}}>✕</button>
         </div>
       )}
+
+      {/* ── Confirmación del último tiempo tomado ──────────────────────
+          Se queda fija hasta el siguiente toque: puedes mirarla cuando te dé
+          la gana en vez de estar pendiente de si el toque ha entrado. */}
+      {last && !editP && (
+        <div style={{
+          display:"flex",alignItems:"center",gap:8,flexShrink:0,
+          padding:"6px 10px",borderRadius:8,
+          background:`${GRN}1a`,border:`1px solid ${GRN}66`,
+        }}>
+          <span style={{fontSize:15,color:GRN,fontWeight:900,flexShrink:0}}>✓</span>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:12,fontWeight:800,color:T1,whiteSpace:"nowrap",
+                         overflow:"hidden",textOverflow:"ellipsis"}}>
+              {last.name} <span style={{color:T3,fontWeight:600}}>· {last.sail}</span>
+            </div>
+            <div style={{fontSize:9,color:T3}}>
+              {legs[last.leg-1]?.label} · {startTime?ft(Math.round((last.t-startTime)/1000)):"--:--"}
+            </div>
+          </div>
+          {!isEspectador && (
+            <button onPointerDown={e=>{
+                e.preventDefault();
+                onDeletePassage({boatId:last.id, boatSailNo:last.sail, leg:last.leg, realTime:last.t});
+                lockRef.current.delete(`${last.id}-${last.leg}`);
+                setLast(null);
+              }}
+              style={{padding:"6px 11px",borderRadius:7,background:CARD2,border:`1px solid ${BDR}`,
+                      color:T2,fontSize:11,fontWeight:800,flexShrink:0,touchAction:"manipulation"}}>
+              ↩ Deshacer
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Rejilla de huecos fijos (sin scroll, sin recolocarse) ───────── */}
+      <div style={{
+        flex:1, minHeight:0, display:"grid", gap:6,
+        gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",
+        gridAutoRows:"minmax(70px,1fr)", overflow:"hidden",
+      }}>
+        {fleetOrdered.map(b=>{
+          const p     = passAt.get(b.id);
+          const ahead = !p && maxLegOf(passages,b)>=active;
+          const el    = p && startTime ? ft(Math.round((p.realTime-startTime)/1000)) : null;
+          const gapOwn= p && ownP && b.id!==ownId
+                      ? Math.round((p.realTime-ownP.realTime)/1000) : null;
+          return (
+            <BoatTile key={b.id} b={b} sail={b.sailNo||b.id||""} photo={photoOf(b)}
+              isOwn={b.id===ownId}
+              state={p?"taken":(ahead?"ahead":"pend")}
+              order={p?orderOf.get(p):null} el={el} gapOwn={gapOwn}
+              disabled={!started||isEspectador} onTap={tap}/>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -3002,6 +3115,7 @@ function TabEnVivo({state,setState,role="patron"}){
   const countdownAt= activeRace?.countdownAt|| null;
   const finishedAt = activeRace?.finishedAt || null;
   const course     = activeRace?.course     || DCOURSE;
+  const legs       = raceLegs(course);      // tramos de esta prueba (vueltas + offset)
   const started    = !!startTime;
 
   // ── HOOKS — siempre en el mismo orden, antes de cualquier return ────────
@@ -3043,7 +3157,7 @@ function TabEnVivo({state,setState,role="patron"}){
       const prog={};
       fleet.forEach(b=>{
         const leg = maxLegOf(passages, b);
-        if(leg>=6){prog[b.id]=1;return;}
+        if(leg>=legs.length){prog[b.id]=1;return;}
         const lastP = [...passages].filter(p=>p.boatId===b.id).sort((a,z)=>z.realTime-a.realTime)[0];
         const legStart = lastP?.realTime || startTime;
         const ldist = legDist(leg+1, activeRace?.course||DCOURSE)||0.8; // nm
@@ -3106,10 +3220,10 @@ function TabEnVivo({state,setState,role="patron"}){
   },[getEffectiveRank]);
 
   const activeLegs = useMemo(()=>{
-    const legs=new Set();
-    fleet.forEach(b=>{const lc=maxLegOf(passages,b);if(lc<6)legs.add(lc+1);});
-    return [...legs].sort((a,b)=>a-b);
-  },[fleet,passages]);
+    const act=new Set();
+    fleet.forEach(b=>{const lc=maxLegOf(passages,b);if(lc<legs.length)act.add(lc+1);});
+    return [...act].sort((a,b)=>a-b);
+  },[fleet,passages,legs.length]);
 
   const standings = useMemo(()=>computeStd(passages,startTime,fleet,course,activeRace?.scoringMode||state.champ?.scoringMode||DEFAULT_SCORING),[passages,startTime,fleet,course,activeRace,state.champ]);
 
@@ -3135,7 +3249,12 @@ function TabEnVivo({state,setState,role="patron"}){
     if(copyFromId) setCopyFromId(null);
   };
   const adjustPassage=(boatId,legN,deltaMs)=>{
+    // El ajuste también se anota: si no, un refresco de la nube lo devolvería
+    // al tiempo original sin avisar.
+    const cur = passages.find(p=>p.boatId===boatId&&p.leg===legN);
+    if(cur) pendingAddPassage(activeRace?.id, {...cur, realTime:cur.realTime+deltaMs});
     updRace(r=>({...r,passages:r.passages.map(p=>p.boatId===boatId&&p.leg===legN?{...p,realTime:p.realTime+deltaMs}:p)}));
+    if(cur) cloud.updatePassageTime(state,{raceLocalId:activeRace?.id, boatSailNo:cur.boatSailNo||boatId, leg:legN, realTime:cur.realTime+deltaMs}).catch(()=>{});
   };
   // ── Toma por boya: el tiempo se guarda EN LA BOYA INDICADA, no en la
   //    "siguiente" del barco. Así se puede saltar una boya sin descuadrar nada.
@@ -3145,18 +3264,21 @@ function TabEnVivo({state,setState,role="patron"}){
     const b = fleet.find(x=>x.id===boatId);
     const realTime = when ?? Date.now();
     if(passages.some(p=>matchPB(p,b||{id:boatId})&&p.leg===legN)) return; // ya tomado
-    updRace(r=>({...r, passages:[...r.passages,
-      {boatId, boatSailNo:b?.sailNo||boatId, leg:legN, realTime, by:role}]}));
+    const nuevo = {boatId, boatSailNo:b?.sailNo||boatId, leg:legN, realTime, by:role};
+    // Anotarlo ANTES de tocar el estado: si entra un refresco de la nube entre
+    // medias, la red de seguridad lo repone en lugar de perderlo.
+    pendingAddPassage(activeRace?.id, nuevo);
+    updRace(r=>({...r, passages:[...r.passages, nuevo]}));
     cloud.recordPassage(state,{raceLocalId:activeRace?.id, boatSailNo:b?.sailNo||boatId, leg:legN, realTime}).catch(()=>{});
   };
   const deletePassage = p=>{
+    pendingDelPassage(activeRace?.id, p.boatSailNo||p.boatId, p.leg);
     updRace(r=>({...r, passages:r.passages.filter(x=>!(x.leg===p.leg && x.realTime===p.realTime && x.boatId===p.boatId))}));
     cloud.removePassage(state,{raceLocalId:activeRace?.id, boatSailNo:p.boatSailNo||p.boatId, leg:p.leg}).catch(()=>{});
   };
   const undo         = ()=>updRace(r=>({...r,passages:r.passages.slice(0,-1),finishedAt:null}));
 
   // ── MARCAS RÁPIDAS: capturar tiempo ahora, asignar barco+boya después ──
-  const legs = raceLegs(course);            // tramos de esta prueba (según vueltas)
   const marks = activeRace?.marks || [];
   // ¿cuántos pasos tiene un barco? (cuenta por boatId o por sailNo normalizado)
   const passCount = boatId => {
@@ -3228,7 +3350,7 @@ function TabEnVivo({state,setState,role="patron"}){
   useEffect(()=>{ if(started&&!allDone&&!voiceOn) startVoice(); },[started]);
   useEffect(()=>{ if(allDone) stopVoice(); },[allDone]);
 
-  const byLeg={};fleet.forEach(b=>{const l=boatLeg(b.id);const k=l>=6?"fin":String(l);if(!byLeg[k])byLeg[k]=[];byLeg[k].push(b);});
+  const byLeg={};fleet.forEach(b=>{const l=boatLeg(b.id);const k=l>=legs.length?"fin":String(l);if(!byLeg[k])byLeg[k]=[];byLeg[k].push(b);});
   const legGroups=Object.entries(byLeg).sort((a,b)=>{if(a[0]==="fin")return 1;if(b[0]==="fin")return-1;return+b[0]-+a[0];});
 
   // Filtrar flota según rol del dispositivo
@@ -3236,13 +3358,13 @@ function TabEnVivo({state,setState,role="patron"}){
   const filteredFleet = useMemo(()=>{
     if(role==="barlovento") return fleet.filter(b=>{
       const lc=maxLegOf(passages,b);
-      const legType=lc<6?LEG_DEF[lc]?.type:null;
-      return lc<6&&(legType==="beat"||legType==="reach");
+      const legType=lc<legs.length?legs[lc]?.type:null;
+      return lc<legs.length&&(legType==="beat"||legType==="reach");
     });
     if(role==="sotavento") return fleet.filter(b=>{
       const lc=maxLegOf(passages,b);
-      const legType=lc<6?LEG_DEF[lc]?.type:null;
-      return lc<6&&legType==="run";
+      const legType=lc<legs.length?legs[lc]?.type:null;
+      return lc<legs.length&&legType==="run";
     });
     return fleet; // patron y espectador ven todos
   },[role,fleet,passages]);
@@ -3256,7 +3378,7 @@ function TabEnVivo({state,setState,role="patron"}){
     fleetByBow.forEach(b=>{
       const bPass = passages.filter(p=>matchPB(p,b));
       const lc = maxLegOf(passages,b);
-      const key = lc>=6 ? "fin" : String(lc);
+      const key = lc>=legs.length ? "fin" : String(lc);
       if(!groups[key]) groups[key]=[];
       const lastPassTime = bPass.length ? Math.max(...bPass.map(p=>p.realTime)) : Infinity;
       groups[key].push({b, lc, lastPassTime});
@@ -3290,8 +3412,8 @@ function TabEnVivo({state,setState,role="patron"}){
               </div>
               <div style={{fontSize:22,fontWeight:800,color:T1,marginBottom:4,textAlign:"center"}}>{pend.boat.name}</div>
               <div style={{fontSize:13,color:T2,marginBottom:4}}>{pend.boat.sailNo}</div>
-              <div style={{fontSize:13,color:LEG_DEF[boatLeg(pend.boat.id)]?.col||GLD,fontWeight:700,marginBottom:24}}>
-                → {LEG_DEF[boatLeg(pend.boat.id)]?.mark||"FIN"}
+              <div style={{fontSize:13,color:legs[boatLeg(pend.boat.id)]?.col||GLD,fontWeight:700,marginBottom:24}}>
+                → {legs[boatLeg(pend.boat.id)]?.mark||"FIN"}
               </div>
               {heard&&<div style={{fontSize:11,color:T2,marginBottom:16}}>🎙 «{heard}»</div>}
               <div style={{display:"flex",gap:12,width:"100%",maxWidth:280}}>
@@ -4007,7 +4129,7 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
                 <div style={{fontSize:io?13:12,fontWeight:700,color:io?r.b.color:T1,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
                   {r.b.name}{io?" ⭐":""}
                 </div>
-                <div style={{fontSize:8,color:T2}}>{r.b.bowNum&&`Proa ${r.b.bowNum} · `}{LEG_DEF[Math.max(0,r.leg-1)]?.label||"En salida"}</div>
+                <div style={{fontSize:8,color:T2}}>{r.b.bowNum&&`Proa ${r.b.bowNum} · `}{raceLegs(course)[Math.max(0,r.leg-1)]?.label||"En salida"}</div>
               </div>
               {hasTime&&(
                 <div style={{textAlign:"right",flexShrink:0}}>
@@ -6224,6 +6346,66 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
 }
 
 // ── PESTAÑA REGATAS — gestión de pruebas y recorrido ─────────────────────────
+// ── Regulador con botones − / + ─────────────────────────────────────────────
+// Navegando, clavar un valor arrastrando la barra es casi imposible. Los
+// botones dan el paso exacto y, si se mantienen pulsados, repiten (0,5 → 5 nm
+// de 0,1 en 0,1 son 45 toques sueltos).
+// A nivel de módulo a propósito: definido dentro del render, React lo
+// remontaría en cada cambio y se cortaría la repetición del botón.
+const StepSlider = React.memo(function StepSlider({label,value,min,max,step,unit="",onChange}){
+  const dec  = (String(step).split(".")[1]||"").length;   // decimales del paso
+  const snap = v => +Math.min(max, Math.max(min, v)).toFixed(dec); // evita 0.15000000000000002
+  const tRef = useRef({to:null, iv:null});
+  // El valor vive en un ref: si no, el setInterval de la repetición se quedaría
+  // con el valor del render en que se pulsó y solo avanzaría un paso.
+  const vRef = useRef(value);
+  vRef.current = value;
+
+  const stop = () => {
+    clearTimeout(tRef.current.to); clearInterval(tRef.current.iv);
+    tRef.current = {to:null, iv:null};
+  };
+  useEffect(()=>stop,[]);                                  // limpiar al desmontar
+
+  const bump = dir => onChange(snap((+vRef.current||0) + dir*step));
+  const hold = (e, dir) => {
+    e.preventDefault();
+    bump(dir);
+    if(navigator.vibrate) navigator.vibrate(8);
+    tRef.current.to = setTimeout(()=>{
+      tRef.current.iv = setInterval(()=>bump(dir), 90);    // repetición al mantener
+    }, 400);
+  };
+
+  const v    = +value||0;
+  const btn  = dis => ({
+    width:34, height:34, borderRadius:8, flexShrink:0,
+    background:CARD2, border:`1px solid ${BDR}`, color:dis?T3:T1,
+    fontSize:19, fontWeight:800, lineHeight:1, opacity:dis?.4:1,
+    touchAction:"manipulation", userSelect:"none",
+  });
+
+  return (
+    <div style={{marginBottom:12}}>
+      <div style={{fontSize:11,color:T2,marginBottom:5}}>{label}</div>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+        <button onPointerDown={e=>hold(e,-1)} onPointerUp={stop} onPointerLeave={stop}
+          onPointerCancel={stop} disabled={v<=min} style={btn(v<=min)} aria-label={`Bajar ${label}`}>−</button>
+        <input type="number" min={min} max={max} step={step} value={value??0}
+          onChange={e=>onChange(e.target.value===""?min:snap(+e.target.value))}
+          style={{flex:1,minWidth:0,textAlign:"center",fontFamily:"monospace",
+                  fontSize:15,fontWeight:800,color:T1,padding:"6px 4px"}}/>
+        <span style={{fontSize:11,color:T2,width:26,flexShrink:0}}>{unit}</span>
+        <button onPointerDown={e=>hold(e,1)} onPointerUp={stop} onPointerLeave={stop}
+          onPointerCancel={stop} disabled={v>=max} style={btn(v>=max)} aria-label={`Subir ${label}`}>+</button>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={v}
+        onChange={e=>onChange(snap(+e.target.value))}
+        style={{width:"100%",accentColor:ACC}}/>
+    </div>
+  );
+});
+
 function TabRegatas({state, setState, race}){
   const [sub, setSub] = useState("regatas");
   const [confirmR, setConfirmR] = useState(null);
@@ -6232,22 +6414,7 @@ function TabRegatas({state, setState, race}){
   const coastalLegs = co.coastalLegs||[];
   const updCourse = (k,v) => setState(s=>({...s, races:s.races.map(r=>r.id===s.activeRaceId?{...r,course:{...r.course,[k]:v}}:r)}));
 
-  const Slider = ({label,k,min,max,step,unit=""})=>(
-    <div style={{marginBottom:10}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,gap:8}}>
-        <span style={{fontSize:11,color:T2}}>{label}</span>
-        <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
-          <input type="number" min={min} max={max} step={step} value={co[k]??0}
-            onChange={e=>{const v=e.target.value===""?0:+e.target.value; updCourse(k, Math.min(max,Math.max(min,v)));}}
-            style={{width:58,textAlign:"right",fontFamily:"monospace",fontSize:13,fontWeight:700,color:T1,padding:"4px 6px"}}/>
-          <span style={{fontSize:11,color:T2}}>{unit}</span>
-        </div>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={co[k]||0}
-        onChange={e=>updCourse(k,+e.target.value)}
-        style={{width:"100%",accentColor:ACC}}/>
-    </div>
-  );
+  // (el regulador vive en StepSlider, a nivel de módulo)
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
@@ -6431,13 +6598,33 @@ function TabRegatas({state, setState, race}){
                   </button>
                 ))}
               </div>
-              <div style={{fontSize:9,color:T3}}>Tramos: {buildLegs(co.vueltas||2).map(L=>L.label).join(" · ")}</div>
+              <div style={{fontSize:9,color:T3}}>Tramos: {buildLegs(co.vueltas||2, !!co.tomarOffset).map(L=>L.label).join(" · ")}</div>
             </Card>
             <Card st={{marginBottom:10}}>
               <Lbl v="Distancias (nm)"/>
-              <Slider label="Distancia Boya 1 (Barlovento)" k="mark1Dist" min={0.5} max={5} step={0.1} unit=" nm"/>
-              <Slider label="Distancia Offset 1a" k="mark1aDist" min={0} max={0.5} step={0.05} unit=" nm"/>
-              {co.mark1aDist>0&&<Slider label="Distancia Puerta (Gate)" k="gateDist" min={0.1} max={0.6} step={0.05} unit=" nm"/>}
+              <StepSlider label="Distancia Boya 1 (Barlovento)" value={co.mark1Dist} min={0.5} max={5} step={0.1} unit=" nm"
+                onChange={v=>updCourse("mark1Dist",v)}/>
+              <StepSlider label="Distancia Offset 1a" value={co.mark1aDist} min={0} max={0.5} step={0.05} unit=" nm"
+                onChange={v=>updCourse("mark1aDist",v)}/>
+              <div style={{display:"flex",alignItems:"center",gap:8,margin:"6px 0 2px"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:10,color:T2,fontWeight:700}}>Tomar tiempos en el Offset</div>
+                  <div style={{fontSize:9,color:T3}}>
+                    {co.tomarOffset
+                      ? "El Offset cuenta como boya con tiempo propio."
+                      : "El Offset no se cronometra; su distancia va en la ceñida."}
+                  </div>
+                </div>
+                <button onClick={()=>updCourse("tomarOffset", !co.tomarOffset)}
+                  style={{width:44,height:24,borderRadius:12,flexShrink:0,position:"relative",
+                          background:co.tomarOffset?PRP:CARD2,border:`1px solid ${co.tomarOffset?PRP:BDR}`}}>
+                  <span style={{position:"absolute",top:2,left:co.tomarOffset?22:2,width:18,height:18,
+                                borderRadius:9,background:"#fff",transition:"left .15s"}}/>
+                </button>
+              </div>
+              <div style={{height:10}}/>
+              {co.mark1aDist>0&&<StepSlider label="Distancia Puerta (Gate)" value={co.gateDist} min={0.1} max={0.6} step={0.05} unit=" nm"
+                onChange={v=>updCourse("gateDist",v)}/>}
               <div style={{display:"flex",gap:6,marginTop:4}}>
                 <span style={{fontSize:10,color:T2,flex:1}}>Lado offset 1a</span>
                 {["port","starboard"].map(s=>(
@@ -6478,7 +6665,8 @@ function TabRegatas({state, setState, race}){
 
           <Card st={{marginBottom:10}}>
             <Lbl v="Viento estimado"/>
-            <Slider label="Viento" k="windKnots" min={2} max={35} step={1} unit=" kts"/>
+            <StepSlider label="Viento" value={co.windKnots} min={2} max={35} step={1} unit=" kts"
+                onChange={v=>updCourse("windKnots",v)}/>
           </Card>
         </>)}
 
@@ -6721,7 +6909,10 @@ export default function App(){
       if(Date.now()-lastSaveTs.current < 2500)return;
       loadS().then(s=>{
         // Solo actualizar si el estado viene de un dispositivo diferente al nuestro
-        if(s && s._deviceId && s._deviceId !== DEVICE_ID) setState(s);
+        if(s && s._deviceId && s._deviceId !== DEVICE_ID){
+          setState(prev=>({...s, races:applyPendingPassages(
+            normalizePassages(s.races, s.fleet||prev.fleet||[]))}));
+        }
       });
     },3000);
     return()=>clearInterval(id);
@@ -6754,7 +6945,8 @@ export default function App(){
           fleet = cloudFleet.length ? cloudFleet : localFleet;
         }
         // Reasignar boatId de cada paso al id local correcto (clave de la sincronización)
-        const races = normalizePassages(fresh.races, fleet);
+        // y reponer los tiempos tomados aquí que la nube aún no refleja.
+        const races = applyPendingPassages(normalizePassages(fresh.races, fleet));
         return {...fresh, fleet, races, _champId:prev._champId, _cloudId:cloudId};
       });
     });
@@ -6827,8 +7019,8 @@ export default function App(){
     {icon:"🏠",label:"Inicio",  idx:0},
     {icon:"🏁",label:"Regatas", idx:1},
     {icon:"🚩",label:"En Vivo", idx:2},
-    {icon:"📋",label:"Tablas",  idx:3},
-    {icon:"📊",label:"Result.", idx:4},
+    // Tablas (3) y Result. (4) fuera de la barra: la clasificación en vivo ya
+    // está en En Vivo → Clasi. Los componentes siguen ahí por si vuelven.
     {icon:"⚙️",label:"Config",  idx:5},
   ];
 
@@ -6886,7 +7078,16 @@ export default function App(){
 
       <div style={{background:BG,height:"100dvh",maxHeight:"100dvh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",overflow:"hidden"}}>
         <style>{CSS}</style>
-        {/* Header con rol y selector */}
+        {/* Punto de sincronización: con la cabecera oculta seguimos viendo si
+            está guardando. Va flotando, no ocupa alto. */}
+        {tab!==0 && sync && (
+          <div style={{position:"fixed",top:6,right:8,zIndex:60,width:8,height:8,
+                       borderRadius:4,background:GRN,boxShadow:`0 0 6px ${GRN}`}}/>
+        )}
+        {/* Header con rol y selector — SOLO en Inicio.
+            En el resto de pestañas se oculta: en la toma de tiempos cada píxel
+            de alto es una fila más de barcos en la rejilla. */}
+        {tab===0 && (
         <div style={{padding:"5px 12px",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0,display:"flex",alignItems:"center",gap:7}}>
           <div style={{flex:1}}>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -6945,6 +7146,7 @@ export default function App(){
             </button>
           )}
         </div>
+        )}
         <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
           {tab===0&&<TabHome champsList={champsList} currentChampId={currentId} state={state} onSelect={selectChamp} onDelete={handleDelete} onNew={()=>setShowWizard(true)} onSyncOrc={orcData=>{
             // Aplicar resultados oficiales de ORC al estado

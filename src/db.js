@@ -215,6 +215,26 @@ export async function recordPassage(state, { raceLocalId, boatSailNo, leg, realT
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
+// Corrige la HORA de un paso ya existente (los ±1 s).
+// recordPassage no sirve: hace upsert con ignoreDuplicates, así que sobre una
+// fila existente no escribe nada y el ajuste se quedaría solo en local.
+export async function updatePassageTime(state, { raceLocalId, boatSailNo, leg, realTime }) {
+  if (!isCloudEnabled()) return { ok: true, local: true };
+  try {
+    const sb = getClient();
+    const champId = lsGet(chKey(state._champId))?._cloudId;
+    if (!champId) return { ok: false };
+    const raceCloudId = await raceCloudIdFor(sb, champId, raceLocalId);
+    if (!raceCloudId) return { ok: false };
+    const { error } = await sb.from("passages")
+      .upsert({
+        championship_id: champId, race_id: raceCloudId,
+        boat_sail_no: normSail(boatSailNo), leg, real_time: realTime, device_id: deviceId(),
+      }, { onConflict: "race_id,boat_sail_no,leg", ignoreDuplicates: false });
+    return { ok: !error, error: error?.message };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 // Borra UN paso concreto (barco + boya) — al corregir un tiempo mal tomado.
 export async function removePassage(state, { raceLocalId, boatSailNo, leg }) {
   if (!isCloudEnabled()) return { ok: true, local: true };
