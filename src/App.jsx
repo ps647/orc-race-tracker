@@ -405,17 +405,21 @@ const WINDS=[4,6,8,10,12,14,16,20,24];
 const DCOURSE={mark1Dist:1.5,mark1aDist:0.15,gateDist:0.3,mark1aSide:"port",windKnots:14,countdownMin:5,raceType:"wl",coastalLegs:[]};
 const INIT={champ:{name:"ORC World Championship 2026",ownId:"UR",mainUrl:"",resultsUrl:"",docsUrl:"",photosUrl:"",entryListUrl:"",scoringMode:"AP_ToD",discardEvery:4,discardMin:4},fleet:CLASS0,races:[{id:"r1",name:"Prueba 1",startTime:null,countdownAt:null,finishedAt:null,passages:[],course:DCOURSE,discarded:false}],activeRaceId:"r1"};
 // Genera los tramos según el nº de vueltas.
-// Cada vuelta: Ceñida + Offset + Popa, EXCEPTO la última, que termina en Llegada
-// (tras el Offset se va directo a meta, sin bajar por popa hasta la puerta).
-// Ej. 2 vueltas: Ceñida1, Offset1, Popa1, Ceñida2, Offset2, Llegada.
-function buildLegs(vueltas=2){
+// El OFFSET no lleva tiempo por defecto: en flota grande pasan diez barcos por
+// la de barlovento y el offset en menos de un minuto y es materialmente
+// imposible cronometrar los dos. Se activa con course.tomarOffset si algún día
+// hace falta. Sin él, la ceñida absorbe su distancia (ver legDistByKind), así
+// que el recorrido total y la corrección ORC no cambian.
+// Ej. 2 vueltas sin offset: Ceñida1, Popa1, Ceñida2, Llegada.
+function buildLegs(vueltas=2, conOffset=false){
   const legs=[]; let n=1;
   for(let v=1; v<=vueltas; v++){
     const last = (v===vueltas);
     legs.push({n:n++, mark:"Boya 1", type:"beat",  label:`Ceñida ${v}`, col:"#d97706", kind:"beat"});
-    legs.push({n:n++, mark:"Offset", type:"reach", label:`Offset ${v}`, col:"#7c3aed", kind:"offset"});
+    if(conOffset)
+      legs.push({n:n++, mark:"Offset", type:"reach", label:`Offset ${v}`, col:"#7c3aed", kind:"offset"});
     if(last){
-      // Última vuelta: del offset directo a meta.
+      // Última vuelta: de barlovento directo a meta.
       legs.push({n:n++, mark:"Llegada", type:"finish", label:"Llegada", col:"#16a34a", kind:"finish"});
     } else {
       legs.push({n:n++, mark:"Puerta", type:"run", label:`Popa ${v}`, col:"#0891b2", kind:"run"});
@@ -423,9 +427,8 @@ function buildLegs(vueltas=2){
   }
   return legs;
 }
-// Tramos de una prueba (según course.vueltas; por defecto 2)
-function raceLegs(course){ return buildLegs(course?.vueltas||2); }
-const LEG_DEF=buildLegs(2);
+// Tramos de una prueba (según course.vueltas y course.tomarOffset)
+function raceLegs(course){ return buildLegs(course?.vueltas||2, !!course?.tomarOffset); }
 
 
 // ── TEMA: los tokens son CSS variables, así un único cambio de :root cambia
@@ -556,7 +559,9 @@ function vpp(b, tws, modeKey=DEFAULT_SCORING){
 // Distancia en millas de un tramo según su TIPO (kind) y las distancias del recorrido.
 function legDistByKind(kind, c){
   const m1=c?.mark1Dist??1.5, off=c?.mark1aDist??0.15, gate=c?.gateDist??0.3;
-  if(kind==="beat")   return m1;
+  // Sin tramo de offset, su distancia va dentro de la ceñida: el recorrido
+  // total se mantiene y el allowance acumulado del ORC sale igual.
+  if(kind==="beat")   return c?.tomarOffset ? m1 : +(m1+Math.max(0,off)).toFixed(3);
   if(kind==="offset") return Math.max(0.05, off);
   if(kind==="run")    return Math.max(0.1, +(m1+off-gate).toFixed(3));
   if(kind==="finish") return Math.max(0.1, +(m1+off-gate).toFixed(3)); // tras offset, bajada a meta ≈ popa
@@ -742,6 +747,8 @@ function boatMapPos(lc, idx, total, progress, atStart) {
 
 function CourseDiagram({course,passages,fleet,started,onTap,legRank={},boatProg={}}){
   const W=380, H=320;
+  const LD = raceLegs(course);      // tramos reales de esta prueba
+  const NL = LD.length;             // ya no son 6 fijos: depende de vueltas y offset
   const hasOffset = (course.mark1aDist||0) > 0;
   const isPort    = (course.mark1aSide||"port") === "port"; // port = izquierda
 
@@ -791,7 +798,7 @@ function CourseDiagram({course,passages,fleet,started,onTap,legRank={},boatProg=
     const lc = maxLegOf(passages, b);
     let progress = boatProg[b.id] ?? null;
     if(progress===null){
-      if(started && lc<6){
+      if(started && lc<NL){
         const rank=legRank[lc+1];
         progress = rank?.length>1
           ? Math.max(0.1, 0.75-(rank.indexOf(b.id)/(rank.length-1))*0.55)
@@ -847,18 +854,18 @@ function CourseDiagram({course,passages,fleet,started,onTap,legRank={},boatProg=
 
       {/* Barcos */}
       {bpos.map(({b,lc,x,y})=>{
-        const canTap = started&&lc<6;
-        const legCol = lc<6?LEG_DEF[lc]?.col||GLD:GRN;
+        const canTap = started&&lc<NL;
+        const legCol = lc<NL?LD[lc]?.col||GLD:GRN;
         return(
           <g key={b.id}>
             <circle cx={x} cy={y} r={20} fill={b.color}
-              stroke={lc>=6?"#fff":canTap?"#fff":"#333"}
-              strokeWidth={lc>=6?3:canTap?2:1} opacity={.95}/>
+              stroke={lc>=NL?"#fff":canTap?"#fff":"#333"}
+              strokeWidth={lc>=NL?3:canTap?2:1} opacity={.95}/>
             <text x={x} y={y+4} fontSize={8} fill="#000" textAnchor="middle" fontWeight="800">
               {b.name.slice(0,4)}
             </text>
-            {lc>=6&&<text x={x} y={y-25} fontSize={12} fill={GRN} textAnchor="middle">✓</text>}
-            {canTap&&<text x={x} y={y+34} fontSize={8} fill={legCol} textAnchor="middle">→{LEG_DEF[lc]?.mark}</text>}
+            {lc>=NL&&<text x={x} y={y-25} fontSize={12} fill={GRN} textAnchor="middle">✓</text>}
+            {canTap&&<text x={x} y={y+34} fontSize={8} fill={legCol} textAnchor="middle">→{LD[lc]?.mark}</text>}
             <circle cx={x} cy={y} r={30} fill="transparent"
               onClick={()=>canTap&&onTap&&onTap(b.id)}
               style={{cursor:canTap?"pointer":"default"}}/>
@@ -3108,6 +3115,7 @@ function TabEnVivo({state,setState,role="patron"}){
   const countdownAt= activeRace?.countdownAt|| null;
   const finishedAt = activeRace?.finishedAt || null;
   const course     = activeRace?.course     || DCOURSE;
+  const legs       = raceLegs(course);      // tramos de esta prueba (vueltas + offset)
   const started    = !!startTime;
 
   // ── HOOKS — siempre en el mismo orden, antes de cualquier return ────────
@@ -3149,7 +3157,7 @@ function TabEnVivo({state,setState,role="patron"}){
       const prog={};
       fleet.forEach(b=>{
         const leg = maxLegOf(passages, b);
-        if(leg>=6){prog[b.id]=1;return;}
+        if(leg>=legs.length){prog[b.id]=1;return;}
         const lastP = [...passages].filter(p=>p.boatId===b.id).sort((a,z)=>z.realTime-a.realTime)[0];
         const legStart = lastP?.realTime || startTime;
         const ldist = legDist(leg+1, activeRace?.course||DCOURSE)||0.8; // nm
@@ -3212,10 +3220,10 @@ function TabEnVivo({state,setState,role="patron"}){
   },[getEffectiveRank]);
 
   const activeLegs = useMemo(()=>{
-    const legs=new Set();
-    fleet.forEach(b=>{const lc=maxLegOf(passages,b);if(lc<6)legs.add(lc+1);});
-    return [...legs].sort((a,b)=>a-b);
-  },[fleet,passages]);
+    const act=new Set();
+    fleet.forEach(b=>{const lc=maxLegOf(passages,b);if(lc<legs.length)act.add(lc+1);});
+    return [...act].sort((a,b)=>a-b);
+  },[fleet,passages,legs.length]);
 
   const standings = useMemo(()=>computeStd(passages,startTime,fleet,course,activeRace?.scoringMode||state.champ?.scoringMode||DEFAULT_SCORING),[passages,startTime,fleet,course,activeRace,state.champ]);
 
@@ -3271,7 +3279,6 @@ function TabEnVivo({state,setState,role="patron"}){
   const undo         = ()=>updRace(r=>({...r,passages:r.passages.slice(0,-1),finishedAt:null}));
 
   // ── MARCAS RÁPIDAS: capturar tiempo ahora, asignar barco+boya después ──
-  const legs = raceLegs(course);            // tramos de esta prueba (según vueltas)
   const marks = activeRace?.marks || [];
   // ¿cuántos pasos tiene un barco? (cuenta por boatId o por sailNo normalizado)
   const passCount = boatId => {
@@ -3343,7 +3350,7 @@ function TabEnVivo({state,setState,role="patron"}){
   useEffect(()=>{ if(started&&!allDone&&!voiceOn) startVoice(); },[started]);
   useEffect(()=>{ if(allDone) stopVoice(); },[allDone]);
 
-  const byLeg={};fleet.forEach(b=>{const l=boatLeg(b.id);const k=l>=6?"fin":String(l);if(!byLeg[k])byLeg[k]=[];byLeg[k].push(b);});
+  const byLeg={};fleet.forEach(b=>{const l=boatLeg(b.id);const k=l>=legs.length?"fin":String(l);if(!byLeg[k])byLeg[k]=[];byLeg[k].push(b);});
   const legGroups=Object.entries(byLeg).sort((a,b)=>{if(a[0]==="fin")return 1;if(b[0]==="fin")return-1;return+b[0]-+a[0];});
 
   // Filtrar flota según rol del dispositivo
@@ -3351,13 +3358,13 @@ function TabEnVivo({state,setState,role="patron"}){
   const filteredFleet = useMemo(()=>{
     if(role==="barlovento") return fleet.filter(b=>{
       const lc=maxLegOf(passages,b);
-      const legType=lc<6?LEG_DEF[lc]?.type:null;
-      return lc<6&&(legType==="beat"||legType==="reach");
+      const legType=lc<legs.length?legs[lc]?.type:null;
+      return lc<legs.length&&(legType==="beat"||legType==="reach");
     });
     if(role==="sotavento") return fleet.filter(b=>{
       const lc=maxLegOf(passages,b);
-      const legType=lc<6?LEG_DEF[lc]?.type:null;
-      return lc<6&&legType==="run";
+      const legType=lc<legs.length?legs[lc]?.type:null;
+      return lc<legs.length&&legType==="run";
     });
     return fleet; // patron y espectador ven todos
   },[role,fleet,passages]);
@@ -3371,7 +3378,7 @@ function TabEnVivo({state,setState,role="patron"}){
     fleetByBow.forEach(b=>{
       const bPass = passages.filter(p=>matchPB(p,b));
       const lc = maxLegOf(passages,b);
-      const key = lc>=6 ? "fin" : String(lc);
+      const key = lc>=legs.length ? "fin" : String(lc);
       if(!groups[key]) groups[key]=[];
       const lastPassTime = bPass.length ? Math.max(...bPass.map(p=>p.realTime)) : Infinity;
       groups[key].push({b, lc, lastPassTime});
@@ -3405,8 +3412,8 @@ function TabEnVivo({state,setState,role="patron"}){
               </div>
               <div style={{fontSize:22,fontWeight:800,color:T1,marginBottom:4,textAlign:"center"}}>{pend.boat.name}</div>
               <div style={{fontSize:13,color:T2,marginBottom:4}}>{pend.boat.sailNo}</div>
-              <div style={{fontSize:13,color:LEG_DEF[boatLeg(pend.boat.id)]?.col||GLD,fontWeight:700,marginBottom:24}}>
-                → {LEG_DEF[boatLeg(pend.boat.id)]?.mark||"FIN"}
+              <div style={{fontSize:13,color:legs[boatLeg(pend.boat.id)]?.col||GLD,fontWeight:700,marginBottom:24}}>
+                → {legs[boatLeg(pend.boat.id)]?.mark||"FIN"}
               </div>
               {heard&&<div style={{fontSize:11,color:T2,marginBottom:16}}>🎙 «{heard}»</div>}
               <div style={{display:"flex",gap:12,width:"100%",maxWidth:280}}>
@@ -4122,7 +4129,7 @@ function LiveStandings({standings, ldr, ownId, ownSt, fleet, course, own, state,
                 <div style={{fontSize:io?13:12,fontWeight:700,color:io?r.b.color:T1,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
                   {r.b.name}{io?" ⭐":""}
                 </div>
-                <div style={{fontSize:8,color:T2}}>{r.b.bowNum&&`Proa ${r.b.bowNum} · `}{LEG_DEF[Math.max(0,r.leg-1)]?.label||"En salida"}</div>
+                <div style={{fontSize:8,color:T2}}>{r.b.bowNum&&`Proa ${r.b.bowNum} · `}{raceLegs(course)[Math.max(0,r.leg-1)]?.label||"En salida"}</div>
               </div>
               {hasTime&&(
                 <div style={{textAlign:"right",flexShrink:0}}>
@@ -6546,12 +6553,28 @@ function TabRegatas({state, setState, race}){
                   </button>
                 ))}
               </div>
-              <div style={{fontSize:9,color:T3}}>Tramos: {buildLegs(co.vueltas||2).map(L=>L.label).join(" · ")}</div>
+              <div style={{fontSize:9,color:T3}}>Tramos: {buildLegs(co.vueltas||2, !!co.tomarOffset).map(L=>L.label).join(" · ")}</div>
             </Card>
             <Card st={{marginBottom:10}}>
               <Lbl v="Distancias (nm)"/>
               <Slider label="Distancia Boya 1 (Barlovento)" k="mark1Dist" min={0.5} max={5} step={0.1} unit=" nm"/>
               <Slider label="Distancia Offset 1a" k="mark1aDist" min={0} max={0.5} step={0.05} unit=" nm"/>
+              <div style={{display:"flex",alignItems:"center",gap:8,margin:"6px 0 2px"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:10,color:T2,fontWeight:700}}>Tomar tiempos en el Offset</div>
+                  <div style={{fontSize:9,color:T3}}>
+                    {co.tomarOffset
+                      ? "El Offset cuenta como boya con tiempo propio."
+                      : "El Offset no se cronometra; su distancia va en la ceñida."}
+                  </div>
+                </div>
+                <button onClick={()=>updCourse("tomarOffset", !co.tomarOffset)}
+                  style={{width:44,height:24,borderRadius:12,flexShrink:0,position:"relative",
+                          background:co.tomarOffset?PRP:CARD2,border:`1px solid ${co.tomarOffset?PRP:BDR}`}}>
+                  <span style={{position:"absolute",top:2,left:co.tomarOffset?22:2,width:18,height:18,
+                                borderRadius:9,background:"#fff",transition:"left .15s"}}/>
+                </button>
+              </div>
               {co.mark1aDist>0&&<Slider label="Distancia Puerta (Gate)" k="gateDist" min={0.1} max={0.6} step={0.05} unit=" nm"/>}
               <div style={{display:"flex",gap:6,marginTop:4}}>
                 <span style={{fontSize:10,color:T2,flex:1}}>Lado offset 1a</span>
@@ -6946,8 +6969,8 @@ export default function App(){
     {icon:"🏠",label:"Inicio",  idx:0},
     {icon:"🏁",label:"Regatas", idx:1},
     {icon:"🚩",label:"En Vivo", idx:2},
-    {icon:"📋",label:"Tablas",  idx:3},
-    {icon:"📊",label:"Result.", idx:4},
+    // Tablas (3) y Result. (4) fuera de la barra: la clasificación en vivo ya
+    // está en En Vivo → Clasi. Los componentes siguen ahí por si vuelven.
     {icon:"⚙️",label:"Config",  idx:5},
   ];
 
@@ -7005,7 +7028,16 @@ export default function App(){
 
       <div style={{background:BG,height:"100dvh",maxHeight:"100dvh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",overflow:"hidden"}}>
         <style>{CSS}</style>
-        {/* Header con rol y selector */}
+        {/* Punto de sincronización: con la cabecera oculta seguimos viendo si
+            está guardando. Va flotando, no ocupa alto. */}
+        {tab!==0 && sync && (
+          <div style={{position:"fixed",top:6,right:8,zIndex:60,width:8,height:8,
+                       borderRadius:4,background:GRN,boxShadow:`0 0 6px ${GRN}`}}/>
+        )}
+        {/* Header con rol y selector — SOLO en Inicio.
+            En el resto de pestañas se oculta: en la toma de tiempos cada píxel
+            de alto es una fila más de barcos en la rejilla. */}
+        {tab===0 && (
         <div style={{padding:"5px 12px",background:CARD,borderBottom:`1px solid ${BDR}`,flexShrink:0,display:"flex",alignItems:"center",gap:7}}>
           <div style={{flex:1}}>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -7064,6 +7096,7 @@ export default function App(){
             </button>
           )}
         </div>
+        )}
         <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
           {tab===0&&<TabHome champsList={champsList} currentChampId={currentId} state={state} onSelect={selectChamp} onDelete={handleDelete} onNew={()=>setShowWizard(true)} onSyncOrc={orcData=>{
             // Aplicar resultados oficiales de ORC al estado
