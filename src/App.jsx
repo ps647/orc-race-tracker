@@ -533,11 +533,23 @@ function ratingToD(b, tws, modeKey=DEFAULT_SCORING){
 
 // Tiempos corregidos por tramo, derivados de la curva real cuando está disponible.
 // beat = ceñida (VMG barlovento), run = popa (VMG run), reach a ~90°.
-function vpp(b, tws, modeKey=DEFAULT_SCORING){
-  // Si el barco trae las curvas detalladas del certificado, las usamos directamente.
+// ¿Todos los barcos con rating tienen curvas beat/run para este viento?
+// Si alguno no las tiene, NO se pueden mezclar curvas reales con la aproximación
+// por factores (salen diferencias absurdas, p.ej. -44 min a 4 kt). En ese caso
+// todo el cálculo cae al single number para toda la flota.
+function fleetHasCurves(fleet, tws, modeKey=DEFAULT_SCORING){
+  const i = WINDS.indexOf(tws);
+  if(i<0) return false;
+  const rated = (fleet||[]).filter(b=>hasValidRating(b,modeKey));
+  return rated.length>0 && rated.every(b=>curveAt(b?.rating?.ta?.beat,i)!=null && curveAt(b?.rating?.ta?.run,i)!=null);
+}
+
+function vpp(b, tws, modeKey=DEFAULT_SCORING, useCurves=true){
+  // Si el barco trae las curvas detalladas del certificado, las usamos directamente
+  // (solo si TODA la flota las tiene: ver fleetHasCurves).
   const r = (typeof b==="object") ? b?.rating : null;
   const i = WINDS.indexOf(tws);
-  if(r?.ta && i>=0){
+  if(useCurves && r?.ta && i>=0){
     const beat = curveAt(r.ta.beat, i);
     if(beat!=null){
       const reach = curveAt(r.ta.r90, i);
@@ -580,13 +592,14 @@ function computeStd(passages,startTime,fleet,course,modeKey=DEFAULT_SCORING){
   const tws=course?.windKnots||14;
   const legsArr=raceLegs(course);
   const kindOf=n=>{ const L=legsArr.find(x=>x.n===n); return L?legAngle(L.kind):"beat"; };
+  const uc=fleetHasCurves(fleet,tws,modeKey);
   return fleet.map(b=>{
     const done=passages.filter(p=>matchPB(p,b)).sort((a,z)=>z.leg-a.leg);
     if(!done.length||!startTime) return {b,ct:null,el:null,leg:0};
     const last=done[0], el=(last.realTime-startTime)/1000;
     let allowance=null;
     if(hasValidRating(b,modeKey)){
-      const v=vpp(b,tws,modeKey);
+      const v=vpp(b,tws,modeKey,uc);
       allowance=0;
       for(let i=1;i<=last.leg;i++){ const a=v[kindOf(i)]; if(a==null){allowance=null;break;} allowance+=a*legDist(i,course); }
       if(allowance==null){ // sin curva: usar ToD efectivo escalar
@@ -890,6 +903,94 @@ function OrcCertUploader({boatName, sailNo, onRatingExtracted}){
   const [ok,   setOk]     = useState(false);
   const fileRef     = useRef(null);  // PDF (vía API IA)
   const htmlFileRef = useRef(null);  // HTML (parser local, sin IA)
+  const pdfLocalRef = useRef(null);  // PDF (parser local, sin IA · Club o International)
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+
+  // ─── PARSER LOCAL DE TEXTO DE CERTIFICADO ORC (Club o International) ──────
+  // Extrae SOLO los single numbers, igual que la carga por API de ORC, para que
+  // todos los barcos de la flota se calculen con el mismo método.
+  // Funciona con el texto de cualquier certificado ORC 2026 (Club, International,
+  // Double Handed): las tablas "Single Number Scoring Options" son idénticas.
+  const parseCertText = (raw) => {
+    const t = String(raw||"").replace(/\s+/g, " ");
+    const num = v => { const n = parseFloat(String(v).replace(",", ".")); return Number.isFinite(n) ? n : null; };
+    // W/L y All purpose: "Windward / Leeward 604.0 0.9933". El ToT (d.dddd) evita
+    // confundirlo con las filas de Selected Courses, que tienen 9 valores de ToD.
+    const wl = t.match(/Windward\s*\/\s*Leeward\s+(\d{3,4}[.,]\d)\s+(\d[.,]\d{4})/i);
+    const ap = t.match(/All\s*purpose\s+(\d{3,4}[.,]\d)\s+(\d[.,]\d{4})/i);
+    const cl = t.match(/Coastal\s*\/\s*Long Distance\s+(\d{3,4}[.,]\d)(?!\s*\d)/i);
+    const aphTod = t.match(/APH\s*ToD:?\s*(\d{3,4}[.,]\d)/i);
+    const aphTot = t.match(/APH\s*ToT:?\s*(\d[.,]\d{4})/i);
+    const cn  = t.match(/CertNo:?\s*(\d+)/i);
+    const vu  = t.match(/Valid until\s+(\d{2})\/(\d{2})\/(\d{4})/i);
+    const ref = t.match(/ORC Ref\s+([A-Z0-9]+)/);
+    const typ = t.match(/(Club|International|Double Handed|Non Spinnaker)\s+Certificate/i);
+    const cls = t.match(/Class\s+(.+?)\s+Designer/);
+    const cdl = t.match(/CDL:?\s*(\d+[.,]\d+)/i);
+    const single = {
+      wl_tod: wl ? num(wl[1]) : null, wl_tot: wl ? num(wl[2]) : null,
+      ap_tod: ap ? num(ap[1]) : (aphTod ? num(aphTod[1]) : null),
+      ap_tot: ap ? num(ap[2]) : (aphTot ? num(aphTot[1]) : null),
+      cld_tod: cl ? num(cl[1]) : null,
+    };
+    return {
+      boatType: cls ? cls[1].trim() : "",
+      certNo: cn ? cn[1] : null,
+      certRef: ref ? ref[1] : null,
+      certType: typ ? typ[1] : null,
+      cdl: cdl ? num(cdl[1]) : null,
+      validUntil: vu ? `${vu[3]}-${vu[2]}-${vu[1]}` : null,
+      single,
+      ta: { beat: null, r90: null, run: null },      // sin curvas: mismo formato que la API
+      curves: { wl: null, ap: null, coastal: null },
+      gpH: single.ap_tod,
+      _source: "texto-local",
+    };
+  };
+
+  // Aplica un rating leído en local y muestra el resumen.
+  const applyLocalRating = (rating, origen) => {
+    const s = rating.single || {};
+    if (s.wl_tod == null && s.ap_tod == null) {
+      setMsg("❌ No se encontró la tabla 'Single Number Scoring Options' en el certificado.");
+      return false;
+    }
+    onRatingExtracted(rating);
+    setOk(true);
+    const parts = [];
+    if (s.wl_tot != null) parts.push(`W/L ToT ${s.wl_tot}`);
+    if (s.wl_tod != null) parts.push(`W/L ToD ${s.wl_tod}`);
+    if (s.ap_tod != null) parts.push(`AP ToD ${s.ap_tod}`);
+    setMsg(`✅ ${rating.certType?rating.certType+" · ":""}${rating.boatType||""} · ${parts.join(" · ")} · válido hasta ${rating.validUntil||"—"} · (${origen})`);
+    return true;
+  };
+
+  // PDF local con pdf.js (cargado bajo demanda desde CDN). Sin IA, sin créditos.
+  const PDFJS_VER = "4.10.38";
+  const handlePdfLocal = async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true); setOk(false);
+    setMsg("⏳ Leyendo PDF del certificado (local, sin IA)...");
+    try {
+      const pdfjs = await import(/* @vite-ignore */ `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VER}/build/pdf.min.mjs`);
+      pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VER}/build/pdf.worker.min.mjs`;
+      const data = new Uint8Array(await file.arrayBuffer());
+      const pdf = await pdfjs.getDocument({ data }).promise;
+      let text = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const tc = await page.getTextContent();
+        text += " " + tc.items.map(it => it.str).join(" ");
+      }
+      applyLocalRating(parseCertText(text), "PDF local");
+    } catch (err) {
+      setMsg("❌ No se pudo leer el PDF: " + err.message + ". Prueba 'Pegar texto del certificado'.");
+    }
+    setBusy(false);
+    e.target.value = "";
+  };
 
   // ─── PARSER LOCAL DE HTML DEL CERTIFICADO ORC (sin API) ───────────────────
   // El HTML descargado desde Sailor Services tiene estructura tabular fija.
@@ -1347,6 +1448,32 @@ Responde SOLO JSON, sin markdown:
           fontSize:10,fontWeight:700,cursor:busy?"default":"pointer"}}>
         📄 Subir certificado HTML (sin IA · gratis)
       </button>
+      {/* PDF local: lee certificados Club e International sin IA */}
+      <input ref={pdfLocalRef} type="file" accept="application/pdf" style={{display:"none"}} onChange={handlePdfLocal}/>
+      <button onClick={()=>pdfLocalRef.current?.click()} disabled={busy}
+        style={{width:"100%",padding:"7px 0",borderRadius:7,marginTop:6,
+          background:`${GRN}18`, color:GRN, border:`1px solid ${GRN}55`,
+          fontSize:10,fontWeight:700,cursor:busy?"default":"pointer"}}>
+        📄 Subir certificado PDF (sin IA · Club o International)
+      </button>
+      <button onClick={()=>setPasteOpen(o=>!o)} disabled={busy}
+        style={{width:"100%",padding:"5px 0",borderRadius:7,marginTop:6,
+          background:"none", color:T2, border:`1px dashed ${BDR}`,
+          fontSize:9,fontWeight:700,cursor:busy?"default":"pointer"}}>
+        📋 {pasteOpen?"Cerrar":"Pegar texto del certificado"}
+      </button>
+      {pasteOpen&&(
+        <div style={{marginTop:5}}>
+          <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)}
+            placeholder="Abre el PDF, selecciona todo (Ctrl+A), copia y pega aquí"
+            style={{width:"100%",height:70,fontSize:9,fontFamily:"monospace",padding:6,borderRadius:6,border:`1px solid ${BDR}`,background:CARD,color:T1,boxSizing:"border-box"}}/>
+          <button onClick={()=>{ if(applyLocalRating(parseCertText(pasteText),"texto pegado")){ setPasteText(""); setPasteOpen(false);} }}
+            disabled={!pasteText.trim()}
+            style={{width:"100%",padding:"6px 0",borderRadius:6,marginTop:4,background:GRN,color:"#fff",border:"none",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+            Leer texto
+          </button>
+        </div>
+      )}
       {msg&&(
         <div style={{marginTop:5,fontSize:9,padding:"5px 8px",borderRadius:6,lineHeight:1.5,
           background:ok?`${GRN}15`:msg.startsWith("❌")||msg.startsWith("⏱")?`${RED}15`:msg.startsWith("📋")?`${ACC}15`:`${CYN}15`,
@@ -1571,7 +1698,7 @@ function BoatCard({b, isOwn, onUpdate, onDelete, regattaName=""}){
                 {b.rating.single?.wl_tot!=null&&<>W/L ToT <strong>{b.rating.single.wl_tot}</strong> · </>}
                 {b.rating.single?.wl_tod!=null&&<>W/L ToD <strong>{b.rating.single.wl_tod}</strong> · </>}
                 {b.rating.single?.ap_tod!=null&&<>AP ToD <strong>{b.rating.single.ap_tod}</strong> · </>}
-                {b.rating.ta?.beat?.length===7?"curvas ✓":"sin curvas (usará single number)"}
+                {(b.rating.ta?.beat?.length===9||b.rating.ta?.beat?.length===7)?"curvas ✓":"sin curvas (usará single number)"}
               </div>
             )}
 
@@ -3723,6 +3850,8 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
   const own = fleet.find(b=>b.id===ownId) || fleet[0];
   if(!own) return <div style={{textAlign:"center",padding:"30px 16px",background:CARD2,borderRadius:10,color:T2,fontSize:12}}>Configura tu barco en Config.</div>;
 
+  // Curvas reales solo si toda la flota las tiene a este viento.
+  const ucCmp = fleetHasCurves(fleet, refW, "WL_ToD");
   // Tipo náutico de cada tramo para coger el allowance correcto de la curva.
   const legType = kind => legAngle(kind);
   // Millas de cada tramo según las distancias configuradas del recorrido (helper compartido).
@@ -3731,7 +3860,7 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
   // Allowance ACUMULADO (segundos de corrección ORC) de un barco hasta el final
   // del tramo n incluido. Usa la curva real por ángulo (vpp); si no, ToD escalar.
   const cumAllowance = (b, n)=>{
-    const v = vpp(b, refW, "WL_ToD");
+    const v = vpp(b, refW, "WL_ToD", ucCmp);
     let acc = 0;
     for(const L of legs){
       const a = v[legType(L.kind)];
@@ -3840,7 +3969,7 @@ function LiveComparativa({fleet, passages, startTime, legs, ownId, course}){
         </table>
       </div>
       <div style={{fontSize:9,color:T3,textAlign:"center",padding:"8px 0",lineHeight:1.5}}>
-        Cálculo teórico ORC (ToD a {refW} kt) según las distancias del recorrido.<br/>
+        Cálculo teórico ORC (ToD a {refW} kt) según las distancias del recorrido · {ucCmp?"curvas reales del certificado":"single number W/L (falta curva en algún barco)"}.<br/>
         Ordenado por la <b>Llegada</b> (resaltada): arriba quien más debe sacarte. <b style={{color:RED}}>+0:18</b> = ese rival debe pasar esa boya 18s antes que tú para empatar.
       </div>
     </div>
@@ -4256,9 +4385,9 @@ function TabTablas({state,race}){
   // Comparativa: calcular diferencias totales y ordenar por mayor ventaja primero
   const rivals = useMemo(()=>{
     if(!hasValidRating(own,sMode)) return [];
-    const ov=vpp(own,refW,sMode);
+    const ov=vpp(own,refW,sMode,fleetHasCurves(state.fleet,refW,sMode));
     return state.fleet.filter(b=>hasValidRating(b,sMode)&&b.id!==own.id).map(b=>{
-      const bv=vpp(b,refW,sMode);
+      const bv=vpp(b,refW,sMode,fleetHasCurves(state.fleet,refW,sMode));
       const dB1   = ov.beat *ld(1)-bv.beat *ld(1);
       const dR1   = ov.reach*ld(2)-bv.reach*ld(2);
       const dRun1 = ov.run  *ld(3)-bv.run  *ld(3);
@@ -4279,7 +4408,7 @@ function TabTablas({state,race}){
           {WINDS.map(w=><button key={w} onClick={()=>setRefW(w)} style={{padding:"4px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:refW===w?GLD:CARD2,color:refW===w?"#000":T2,border:`1px solid ${refW===w?GLD:BDR}`}}>{w}kts</button>)}
         </div>
         {mode==="tabla"&&[...state.fleet.filter(b=>hasValidRating(b,sMode))].sort((a,z)=>ratingToD(a,refW,sMode)-ratingToD(z,refW,sMode)).map(b=>{
-          const v=vpp(b,refW,sMode),total=(v.beat*ld(1)+v.reach*ld(2)+v.run*ld(3))*2,isOwn=b.id===state.champ.ownId;
+          const v=vpp(b,refW,sMode,fleetHasCurves(state.fleet,refW,sMode)),total=(v.beat*ld(1)+v.reach*ld(2)+v.run*ld(3))*2,isOwn=b.id===state.champ.ownId;
           // El certificado ORC requiere un ID interno que cambia anualmente
           // Google siempre encuentra el certificado correcto
           const boatShortName = b.name.replace(/^[A-Z]+\s+/,''); // quitar sponsor (VITHAS URBANIA → URBANIA)
@@ -4315,7 +4444,7 @@ function TabTablas({state,race}){
                     {[["↑",GLD,"beat",1],["↔",PRP,"reach",2],["↓",CYN,"run",3]].map(([sym,col,type,n])=>(
                       <tr key={type}>
                         <td style={{color:col,padding:"2px 3px"}}>{sym}</td>
-                        {WINDS.map(w=>{const val=vpp(b,w,sMode)[type]*ld(n);return <td key={w} style={{padding:"2px 4px",textAlign:"center",fontFamily:"monospace",color:w===refW?col:T1,background:w===refW?`${col}18`:""}}>{ft(val)}</td>;})}
+                        {WINDS.map(w=>{const val=vpp(b,w,sMode,fleetHasCurves(state.fleet,w,sMode))[type]*ld(n);return <td key={w} style={{padding:"2px 4px",textAlign:"center",fontFamily:"monospace",color:w===refW?col:T1,background:w===refW?`${col}18`:""}}>{ft(val)}</td>;})}
                       </tr>
                     ))}
                   </tbody>
