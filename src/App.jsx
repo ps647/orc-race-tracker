@@ -6338,7 +6338,66 @@ function TeamManager({ championshipId, championshipName, currentUserEmail, myRol
   );
 }
 
-function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, onSyncOrc}){
+// ── Entrar en un campeonato ya creado (lista de la nube o código) ─────────────
+function OpenCloudChamp({onOpen}){
+  const [list, setList] = useState(null);   // null = cargando
+  const [code, setCode] = useState("");
+  const [msg,  setMsg]  = useState("");
+  const [busy, setBusy] = useState(false);
+  const enabled = cloud.isCloudEnabled();
+
+  useEffect(()=>{
+    if(!enabled){ setList([]); return; }
+    cloud.listChampionships().then(l=>setList(l||[])).catch(()=>setList([]));
+  },[enabled]);
+
+  const openCode = async c=>{
+    const k=(c||"").trim().toUpperCase();
+    if(!k) return;
+    setBusy(true); setMsg("⏳ Cargando campeonato...");
+    try{
+      const loaded = await cloud.loadByCode(k);
+      if(!loaded){ setMsg("❌ No existe un campeonato con ese código o no tienes acceso"); setBusy(false); return; }
+      setMsg("");
+      await onOpen(loaded);
+    }catch(e){ setMsg("❌ "+e.message); }
+    setBusy(false);
+  };
+
+  if(!enabled) return (
+    <div style={{padding:"12px 13px",background:CARD,border:`1px solid ${GLD}55`,borderRadius:12,marginBottom:10,fontSize:10,color:T2,lineHeight:1.6}}>
+      ⚠️ Este dispositivo no está conectado a la nube. Ve a <strong style={{color:T1}}>⚙️ Config → ☁️ Sincronización en la nube</strong>, pega la URL y la publishable key de Supabase y vuelve aquí.
+    </div>
+  );
+
+  return (
+    <div style={{padding:"12px 13px",background:CARD,border:`1px solid ${ACC}55`,borderRadius:12,marginBottom:10}}>
+      <div style={{fontSize:10,color:T2,fontWeight:700,marginBottom:6}}>Elige el campeonato:</div>
+      {list===null ? (
+        <div style={{fontSize:10,color:T3,padding:"8px 0"}}>⏳ Buscando en la nube...</div>
+      ) : list.length===0 ? (
+        <div style={{fontSize:10,color:T3,padding:"8px 0"}}>No se encontraron campeonatos. Prueba con el código.</div>
+      ) : list.map(c=>(
+        <button key={c.id} onClick={()=>openCode(c.join_code)} disabled={busy}
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",gap:8,padding:"9px 10px",marginBottom:6,
+            background:CARD2,border:`1px solid ${BDR}`,borderRadius:8,cursor:busy?"default":"pointer",textAlign:"left"}}>
+          <span style={{fontSize:12,fontWeight:700,color:T1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+          <span style={{fontSize:11,color:GRN,fontFamily:"monospace",fontWeight:800,flexShrink:0}}>{c.join_code} →</span>
+        </button>
+      ))}
+      <div style={{fontSize:10,color:T2,fontWeight:700,margin:"8px 0 4px"}}>O escribe el código:</div>
+      <div style={{display:"flex",gap:6}}>
+        <input value={code} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="EJ. GODO26"
+          style={{flex:1,textTransform:"uppercase",fontFamily:"monospace",fontWeight:700,padding:"7px 9px",borderRadius:7,border:`1px solid ${BDR}`,background:CARD2,color:T1}}/>
+        <Btn v="Entrar" onClick={()=>openCode(code)} c="acc" dis={busy||!code.trim()}/>
+      </div>
+      {msg && <div style={{fontSize:10,marginTop:6,color:msg.startsWith("❌")?RED:T2}}>{msg}</div>}
+    </div>
+  );
+}
+
+function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, onOpenCloud, onSyncOrc}){
+  const [showOpen, setShowOpen] = useState(false);
   const [confirm2,setConfirm2] = useState(null);
   const [clearing,setClearing] = useState(false);
   const [syncing, setSyncing]  = useState(false);
@@ -6404,25 +6463,17 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
       </div>
 
       <Btn v="＋ Nuevo campeonato" onClick={onNew} c="grn" fw lg st={{marginBottom:8}}/>
+      <Btn v={showOpen?"✕ Cerrar":"☁️ Campeonato ya creado"} onClick={()=>setShowOpen(o=>!o)} c="acc" fw lg st={{marginBottom:8}}/>
+      {showOpen && <OpenCloudChamp onOpen={async loaded=>{ await onOpenCloud?.(loaded); setShowOpen(false); }}/>}
       <Btn v="📚 Mi biblioteca de barcos" onClick={()=>setShowLibrary(true)} c="dim" fw st={{marginBottom:10,fontSize:11}}/>
       {showLibrary && <LibraryManager onClose={()=>setShowLibrary(false)}/>}
 
       {champsList.length===0 ? (
         <div style={{textAlign:"center",padding:"20px 16px",background:CARD,borderRadius:12,border:`1px solid ${BDR}`}}>
           <div style={{fontSize:10,color:T2,lineHeight:1.6,marginBottom:16}}>
-            No se encontraron campeonatos guardados.<br/>
-            Si usabas la versión anterior, puede que el formato haya cambiado.<br/>
-            Crea un nuevo campeonato o limpia los datos para empezar de cero.
+            No hay campeonatos en este dispositivo.<br/>
+            Crea uno nuevo o entra en uno ya creado con <strong style={{color:T1}}>☁️ Campeonato ya creado</strong>.
           </div>
-          <Btn v={clearing?"Limpiando...":"🗑 Limpiar datos y empezar de nuevo"}
-            onClick={()=>setConfirm2({
-              msg:"¿Limpiar TODOS los datos guardados? Se borrarán todos los campeonatos de este dispositivo.",
-              onOk:()=>setTimeout(()=>setConfirm2({
-                msg:"⚠️ ÚLTIMA confirmación: esto NO se puede deshacer. ¿Seguro que quieres borrar todo?",
-                onOk:clearStorage
-              }),50)
-            })}
-            c="red" fw dis={clearing}/>
         </div>
       ):(
         champsList.map(ch=>{
@@ -6452,24 +6503,9 @@ function TabHome({champsList, currentChampId, state, onSelect, onDelete, onNew, 
       )}
 
       <div style={{marginTop:16,padding:"10px 13px",background:CARD2,borderRadius:8,fontSize:10,color:T2,lineHeight:1.6}}>
-        💡 <strong style={{color:T1}}>Multi-dispositivo:</strong> Abre este mismo artifact en otro móvil y comparte el estado en tiempo real.
+        💡 <strong style={{color:T1}}>Multi-dispositivo:</strong> en el otro móvil pulsa <strong style={{color:T1}}>☁️ Campeonato ya creado</strong> y elige el campeonato o escribe su código. Los cambios se ven en tiempo real.
       </div>
 
-      {/* Limpiar datos — siempre accesible */}
-      <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${BDR}`}}>
-        <Btn v={clearing?"Limpiando...":"🗑 Limpiar TODO (este móvil + nube)"}
-          onClick={()=>setConfirm2({
-            msg:"¿Borrar TODOS los campeonatos de este móvil Y de la nube? Afecta a todos los dispositivos.",
-            onOk:()=>setTimeout(()=>setConfirm2({
-              msg:"⚠️ ÚLTIMA confirmación: borra todo (local y nube) y no se puede deshacer.",
-              onOk:clearStorage
-            }),50)
-          })}
-          c="red" fw dis={clearing}/>
-        <div style={{fontSize:9,color:T3,marginTop:6,lineHeight:1.5,textAlign:"center"}}>
-          Borra los campeonatos de este móvil y también de la nube. Para empezar de cero limpio.
-        </div>
-      </div>
     </div>
   );
 }
@@ -7098,6 +7134,29 @@ export default function App(){
     setTab(2); // Ir a En Vivo
   },[currentId, state]);
 
+  // Abrir un campeonato YA CREADO en la nube (por código o desde la lista).
+  // Lo añade a la lista local de este dispositivo y entra en él, sin re-subirlo.
+  const openFromCloud = useCallback(async(loaded)=>{
+    if(!loaded) return;
+    const id = loaded._champId;
+    loaded.races = normalizePassages(loaded.races||[], loaded.fleet||[]);
+    if(currentId && currentId!==id) await saveCh(currentId,{...state,_champId:currentId});
+    const entry = {id, name:loaded.champ?.name||"Campeonato", racesCount:(loaded.races||[]).length,
+                   fleetCount:(loaded.fleet||[]).length, createdAt:Date.now()};
+    const prev = champsRef.current;
+    const newIdx = prev.some(c=>c.id===id)
+      ? prev.map(c=>c.id===id?{...entry, createdAt:c.createdAt||entry.createdAt}:c)
+      : [...prev, entry];
+    setChampsList(newIdx);
+    await saveIdx(newIdx);
+    lsSet(chKey(id), loaded);              // solo caché local: los datos ya están en la nube
+    setState(loaded);
+    setCurrentId(id);
+    lastSaveTs.current = Date.now();
+    await saveS({...loaded,_champId:id});
+    setTab(2);                              // directo a En Vivo
+  },[currentId, state]);
+
   // Crear nuevo campeonato desde el wizard
   const createChamp = useCallback(async({name, fleet, ownId, mainUrl="", resultsUrl="", docsUrl="", photosUrl="", entryListUrl="", scoringMode=DEFAULT_SCORING, discardEvery=4, discardMin=4})=>{
     const id = `champ_${Date.now()}`;
@@ -7277,7 +7336,7 @@ export default function App(){
         </div>
         )}
         <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-          {tab===0&&<TabHome champsList={champsList} currentChampId={currentId} state={state} onSelect={selectChamp} onDelete={handleDelete} onNew={()=>setShowWizard(true)} onSyncOrc={orcData=>{
+          {tab===0&&<TabHome champsList={champsList} currentChampId={currentId} state={state} onSelect={selectChamp} onDelete={handleDelete} onNew={()=>setShowWizard(true)} onOpenCloud={openFromCloud} onSyncOrc={orcData=>{
             // Aplicar resultados oficiales de ORC al estado
             if(!orcData) return;
             wrappedSetState(s=>{
